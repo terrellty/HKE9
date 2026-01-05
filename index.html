@@ -178,6 +178,23 @@
       backdrop-filter: blur(10px);
       will-change: transform;
     }
+    .danmaku-item.sticker { padding: 4px 8px; }
+    .danmaku-item.sticker img {
+      width: 44px;
+      height: 44px;
+      object-fit: contain;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    .chat-sticker {
+      width: 92px;
+      height: 92px;
+      object-fit: contain;
+      border-radius: 14px;
+      border: 1px solid rgba(250,204,21,.18);
+      background: rgba(2,6,23,.25);
+    }
 
     /* Table scene */
     .table-felt {
@@ -623,6 +640,12 @@
           </section>
 
           <section class="rounded-2xl bg-black/20 border border-white/10 p-3">
+            <div class="text-xs text-emerald-100/70">Sticker</div>
+            <div id="stickerStatus" class="mt-1 text-[11px] text-emerald-100/70">載入中…</div>
+            <div id="chatStickers" class="mt-2 grid grid-cols-5 sm:grid-cols-6 gap-2"></div>
+          </section>
+
+          <section class="rounded-2xl bg-black/20 border border-white/10 p-3">
             <div class="text-xs text-emerald-100/70">輸入</div>
             <div class="mt-2 flex items-center gap-2">
               <input id="inpChat" maxlength="200" class="flex-1 bg-black/35 border border-white/10 rounded-xl px-3 py-2 outline-none focus:border-amber-200/50" placeholder="輸入訊息…（Enter 發送）" />
@@ -816,7 +839,22 @@
     const glog = (msg, opts={}) => {
       if (!opts?.chat) return; // hide game/system info in chat
 
-      const line = el('div', 'text-emerald-50/90', `[${nowTime()}] ${msg}`);
+      const line = el('div', 'text-emerald-50/90');
+      const time = `[${nowTime()}] `;
+
+      if (opts.kind === 'sticker' && opts.url) {
+        const row = el('div', 'flex items-start gap-2');
+        row.appendChild(el('div', 'shrink-0 text-emerald-50/90', time + (msg || '')));
+        const img = document.createElement('img');
+        img.src = opts.url;
+        img.alt = 'sticker';
+        img.className = 'chat-sticker';
+        row.appendChild(img);
+        line.appendChild(row);
+      } else {
+        line.textContent = time + String(msg || '');
+      }
+
       $('gameLog').prepend(line);
 
       const chatOpen = !$('logModal').classList.contains('hidden');
@@ -1109,32 +1147,118 @@
         }
       }
 
-      // append locally (chat only)
+      // append locally (chat record)
       glog(`${myName}：${t}`, {chat:true});
+      // all chat content also goes to danmaku
+      spawnDanmaku({kind:'text', text: t}, myName);
 
       // send to network
+      const payload = {t:'chat', kind:'text', from: myName, fromId: (isHost ? hostId : myId), text: t};
       if (isHost) {
-        broadcast({t:'chat', from: myName, fromId: hostId, text: t});
+        broadcast(payload);
       } else {
-        send(clientConn, {t:'chat', from: myName, fromId: myId, text: t});
+        send(clientConn, payload);
       }
     }
 
-    function spawnDanmaku(text, from='') {
+    function sendChatSticker(url) {
+      const u = String(url || '').trim();
+      if (!u) return;
+
+      const myName = clientState.myName || '我';
+
+      if (!isHost) {
+        if (!clientConn || !clientState.connected) {
+          toast('尚未連線到房主');
+          return;
+        }
+      }
+
+      // record in chat
+      glog(`${myName}：`, {chat:true, kind:'sticker', url: u});
+      // danmaku
+      spawnDanmaku({kind:'sticker', url: u}, myName);
+
+      const payload = {t:'chat', kind:'sticker', from: myName, fromId: (isHost ? hostId : myId), url: u};
+      if (isHost) {
+        broadcast(payload);
+      } else {
+        send(clientConn, payload);
+      }
+    }
+
+    async function initStickers() {
+      const root = $('chatStickers');
+      const status = $('stickerStatus');
+      if (!root || !status) return;
+
+      root.innerHTML = '';
+      status.textContent = '載入中…';
+
+      try {
+        const api = 'https://api.github.com/repos/hketerrell/HKE9/contents/sticker?ref=20c45f14e91ea5564a63fb95eb80ff6234b2dd82';
+        const res = await fetch(api, {cache:'no-store'});
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const list = await res.json();
+        const files = (Array.isArray(list) ? list : [])
+          .filter(x => x && x.type === 'file' && String(x.name||'').toLowerCase().endsWith('.png') && x.download_url)
+          .sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
+
+        if (!files.length) {
+          status.textContent = '未找到 sticker';
+          return;
+        }
+
+        status.textContent = `Sticker：${files.length} 個`;
+        for (const f of files) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 p-1 active:scale-[0.99] transition';
+          const img = document.createElement('img');
+          img.src = f.download_url;
+          img.alt = f.name;
+          img.loading = 'lazy';
+          img.className = 'w-full h-auto';
+          btn.appendChild(img);
+          btn.addEventListener('click', () => sendChatSticker(f.download_url));
+          root.appendChild(btn);
+        }
+      } catch (e) {
+        status.textContent = 'Sticker 載入失敗';
+        log('Sticker load error: ' + (e?.message || e));
+      }
+    }
+
+    function spawnDanmaku(payload, from='') {
       const root = $('danmaku');
       if (!root) return;
       root.classList.remove('hidden');
 
-      const msg = String(text || '').trim();
-      if (!msg) return;
+      const p = (payload && typeof payload === 'object') ? payload : {kind:'text', text:String(payload||'')};
+      const kind = p.kind || 'text';
 
       const line = document.createElement('div');
-      line.className = 'danmaku-item';
+      line.className = 'danmaku-item' + (kind === 'sticker' ? ' sticker' : '');
+
       const who = from ? `${from}：` : '';
-      line.textContent = who + msg;
+      if (kind === 'sticker' && p.url) {
+        // Sticker danmaku
+        const whoSpan = el('span', 'mr-2');
+        whoSpan.textContent = who;
+        line.appendChild(whoSpan);
+
+        const img = document.createElement('img');
+        img.src = String(p.url);
+        img.alt = 'sticker';
+        img.loading = 'lazy';
+        line.appendChild(img);
+      } else {
+        const msg = String(p.text || '').trim();
+        if (!msg) return;
+        line.textContent = who + msg;
+      }
 
       // random track
-      const tracks = 8;
       const h = window.innerHeight;
       const topMin = 72;
       const topMax = Math.max(topMin, h - 180);
@@ -1151,7 +1275,6 @@
         if (root.childElementCount === 0) root.classList.add('hidden');
       };
       line.addEventListener('animationend', cleanup);
-      // safety cleanup
       setTimeout(cleanup, duration + 200);
     }
 
@@ -1170,13 +1293,13 @@
       }
 
       // show locally immediately
-      spawnDanmaku(t, myName);
+      spawnDanmaku({kind:'text', text: t}, myName);
 
       // send to network
       if (isHost) {
-        broadcast({t:'danmaku', from: myName, fromId: hostId, text: t});
+        broadcast({t:'danmaku', kind:'text', from: myName, fromId: hostId, text: t});
       } else {
-        send(clientConn, {t:'danmaku', from: myName, fromId: myId, text: t});
+        send(clientConn, {t:'danmaku', kind:'text', from: myName, fromId: myId, text: t});
       }
     }
 
@@ -2554,22 +2677,39 @@
       if (msg.t === 'chat') {
         const fromId = conn.peer;
         const fromName = hostState.players[fromId]?.name || fromId;
-        const text = String(msg.text||'').slice(0,200);
+
+        // Normalise
+        const kind = msg.kind || 'text';
+        const text = kind === 'text' ? String(msg.text||'').slice(0,200) : '';
+        const url = kind === 'sticker' ? String(msg.url||'').slice(0,500) : '';
+
         // broadcast to all (including sender)
-        broadcast({t:'chat', from: fromName, fromId, text});
-        // also show on host screen (mark as chat)
-        glog(`${fromName}：${text}`, {chat:true});
+        broadcast({t:'chat', kind, from: fromName, fromId, text, url});
+
+        // local: keep chat record + danmaku for everything
+        if (kind === 'sticker' && url) {
+          glog(`${fromName}：`, {chat:true, kind:'sticker', url});
+          spawnDanmaku({kind:'sticker', url}, fromName);
+        } else {
+          glog(`${fromName}：${text}`, {chat:true});
+          spawnDanmaku({kind:'text', text}, fromName);
+        }
         return;
       }
 
       if (msg.t === 'danmaku') {
         const fromId = conn.peer;
         const fromName = hostState.players[fromId]?.name || fromId;
-        const text = String(msg.text||'').slice(0,200);
+        const kind = msg.kind || 'text';
+        const text = kind === 'text' ? String(msg.text||'').slice(0,200) : '';
+        const url = kind === 'sticker' ? String(msg.url||'').slice(0,500) : '';
+
         // broadcast to all (including sender)
-        broadcast({t:'danmaku', from: fromName, fromId, text});
+        broadcast({t:'danmaku', kind, from: fromName, fromId, text, url});
+
         // show on host immediately
-        spawnDanmaku(text, fromName);
+        if (kind === 'sticker' && url) spawnDanmaku({kind:'sticker', url}, fromName);
+        else spawnDanmaku({kind:'text', text}, fromName);
         return;
       }
 
@@ -2770,7 +2910,15 @@
       if (msg.t === 'chat') {
         // de-dup: if this is my own message echoed back, skip (already appended locally)
         if (msg.fromId && msg.fromId === myId) return;
-        glog(`${msg.from}：${msg.text}`, {chat:true});
+
+        const kind = msg.kind || 'text';
+        if (kind === 'sticker' && msg.url) {
+          glog(`${msg.from}：`, {chat:true, kind:'sticker', url: String(msg.url)});
+          spawnDanmaku({kind:'sticker', url: String(msg.url)}, String(msg.from||''));
+        } else {
+          glog(`${msg.from}：${msg.text}`, {chat:true});
+          spawnDanmaku({kind:'text', text: String(msg.text||'')}, String(msg.from||''));
+        }
         return;
       }
 
@@ -4679,8 +4827,9 @@
       const msg = btn.dataset.msg;
       // quick msg: keep chat record + force danmaku on all players
       sendChatText(msg);
-      sendDanmakuText(msg);
     });
+
+    // Stickers click handled in initStickers()
 
     $('btnCloseStatus').addEventListener('click', closeStatusModal);
     $('statusBackdrop').addEventListener('click', closeStatusModal);
