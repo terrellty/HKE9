@@ -274,7 +274,7 @@
         <span id="netBadge" class="text-[11px] px-2 py-1 rounded-full chip text-amber-100">離線</span>
       </div>
       <div class="absolute top-2 right-2 z-[40]">
-        <button id="btnGoLobby" class="hidden text-[11px] px-2.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">回大廳</button>
+        <button id="btnGoLobby" class="hidden text-[11px] px-2.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">退出房間</button>
       </div>
 
       <!-- Lobby Page -->
@@ -3167,6 +3167,7 @@
       showPage('game');
       $('gameRoomId').textContent = myId;
       renderGameHeader();
+      try { renderTableSeats(); } catch {}
       log(`房主開始遊戲：共 ${hostState.settings.roundsTotal} 局`);
       updateMyCumulative();
       nextRound();
@@ -3177,6 +3178,7 @@
       hostState.round += 1;
       hostState.revealed = false;
       updateMidActionButton();
+      try { renderTableSeats(); } catch {}
       hostState.dealt = {};
       hostState.submissions = {};
       hostState.dealerId = null;
@@ -3744,10 +3746,36 @@
       const N = Math.max(1, Math.min(6, playersAll.length));
       const players = playersAll.slice(0, N);
 
-      // center mark
-      const center = el('div', 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2');
-      center.appendChild(el('div', 'rounded-full px-4 py-2 chip text-amber-100 text-xs font-black', 'HKE九張'));
-      root.appendChild(center);
+      // center mark / action button
+      const centerBtn = document.createElement('button');
+      centerBtn.type = 'button';
+      centerBtn.id = 'btnOpenActionMenu';
+      centerBtn.className = 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-6 py-3 chip text-amber-100 text-sm font-black hover:brightness-110 active:scale-[0.99] transition';
+
+      // Label: before start show "開始" for host, otherwise show HKE九張
+      const started = (isHost ? (hostState.round > 0) : (clientState.round > 0));
+      centerBtn.textContent = (!started && isHost) ? '開始' : 'HKE九張';
+
+      centerBtn.addEventListener('click', () => {
+        const hasDealt = (clientState.cards9 && clientState.cards9.length);
+        const started2 = (isHost ? (hostState.round > 0) : (clientState.round > 0));
+
+        // Waiting room: host can start; players wait
+        if (!started2 && !hasDealt) {
+          if (isHost) startGame();
+          else toast('等待房主開始遊戲');
+          return;
+        }
+
+        // In round: open arrange if we have cards
+        if (!hasDealt) {
+          toast('等待房主發牌');
+          return;
+        }
+        openArrangeModal();
+      });
+
+      root.appendChild(centerBtn);
 
       // Choose a smaller radius on narrow screens to avoid seats going out of bounds
       const rect = root.getBoundingClientRect();
@@ -4911,7 +4939,11 @@
 
     $('btnStartGame').addEventListener('click', () => startGame());
 
-    $('btnGoLobby').addEventListener('click', () => showPage('lobby'));
+    // Top-right: Exit room
+    $('btnGoLobby').addEventListener('click', () => {
+      resetAll();
+      showPage('lobby');
+    });
     $('btnBackToLobby').addEventListener('click', () => showPage('lobby'));
 
     $('btnClearLog').addEventListener('click', () => $('log').innerHTML='');
@@ -4999,20 +5031,7 @@
     $('btnCloseArrange2').addEventListener('click', closeArrangeModal);
     $('arrangeBackdrop').addEventListener('click', closeArrangeModal);
 
-    // Table center hotspot opens Arrange modal
-    $('btnOpenActionMenu')?.addEventListener('click', () => {
-      // Waiting room: allow host to start from center button
-      const hasDealt = (clientState.cards9 && clientState.cards9.length);
-      if (!hasDealt) {
-        if (isHost) {
-          startGame();
-        } else {
-          toast('等待房主開始遊戲');
-        }
-        return;
-      }
-      openArrangeModal();
-    });
+    // Table center button is re-created by renderTableSeats(); its click handler is bound there.
 
     // Dealer pick (pre-reveal) modal events
     $('btnCloseDealerPickPre').addEventListener('click', closeDealerPickPreModal);
