@@ -4,6 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>HKE九張｜PeerJS 線上撲克牌（測試中）</title>
+
+  <!-- PWA / iOS WebApp meta -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#064e3b" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="HKE九張" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
@@ -5630,6 +5640,22 @@
     }, { passive: false });
 
     (function init() {
+      // PWA: register service worker (only works on http(s), not file://)
+      try {
+        const canSw = ('serviceWorker' in navigator) && location.protocol !== 'file:';
+        if (canSw) {
+          navigator.serviceWorker.register('./sw.js').then((reg) => {
+            dlog('PWA: service worker registered');
+          }).catch((e) => {
+            dlog('PWA: service worker register failed: ' + (e?.message || e));
+          });
+        } else {
+          dlog('PWA: service worker skipped (unsupported or file://)');
+        }
+      } catch (e) {
+        dlog('PWA: init error: ' + (e?.message || e));
+      }
+
       applyNetConfigToUI();
       setTurnTestStatus('TURN 測試：尚未測試');
       const saved = localStorage.getItem('ninePokerName');
@@ -5659,6 +5685,20 @@
       updateBodyOverflow();
       updateChatUnread();
       log('開啟頁面完成。可建立房間或加入房間。');
+
+      // iOS PWA install hint (best-effort)
+      try {
+        const ua = navigator.userAgent || '';
+        const isIOS = /iPhone|iPad|iPod/i.test(ua);
+        const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (navigator.standalone === true);
+        if (isIOS && !isStandalone) {
+          const shown = localStorage.getItem('ninePokerPwaHintShown');
+          if (!shown) {
+            localStorage.setItem('ninePokerPwaHintShown','1');
+            toast('iOS：建議用 Safari「加入主畫面」以 PWA 模式使用（全屏更穩定）');
+          }
+        }
+      } catch {}
 
       // Init stickers for chat
       try { initStickers(); } catch {}
