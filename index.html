@@ -749,7 +749,7 @@
   </div>
 
   <!-- Reveal Modal -->
-  <div id="revealModal" class="hidden fixed inset-0 z-50">
+  <div id="revealModal" class="hidden fixed inset-0 z-[60]">
     <div class="absolute inset-0 backdrop" id="revealBackdrop"></div>
     <div class="absolute inset-x-0 bottom-0 sm:inset-0 sm:flex sm:items-center sm:justify-center p-2">
       <div class="w-full sm:max-w-5xl rounded-2xl panel border border-amber-200/20">
@@ -897,7 +897,7 @@
     // - Fallback to GitHub/jsDelivr (so icons still work without a key)
 
     const DRIVE_FOLDER_ID = '1wXFqri-r7MjatMM8qwaQWCY3zGsFUiKx';
-    const DRIVE_API_KEY = ''; // optional: put your Google API key here to enable Drive lookup
+    const DRIVE_API_KEY = 'AIzaSyDvioGAwurZtmD-rWV3bIyWv60UtanMimI'; // optional: put your Google API key here to enable Drive lookup
 
     const ICON_FALLBACK_BASE = 'https://cdn.jsdelivr.net/gh/hketerrell/HKE9@main/icon/';
 
@@ -931,7 +931,9 @@
       const idx = loadDriveIconIndex();
       if (idx[n]) return idx[n];
 
-      const q = `'${DRIVE_FOLDER_ID}' in parents and trashed=false and name='${n}.png'`;
+      // Escape single quotes for Drive query
+      const safeName = n.replace(/'/g, "\\'");
+      const q = `'${DRIVE_FOLDER_ID}' in parents and trashed=false and name='${safeName}.png'`;
       const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent('files(id,name)')}&key=${encodeURIComponent(DRIVE_API_KEY)}`;
 
       const res = await fetch(url, { cache: 'no-store' });
@@ -958,8 +960,6 @@
     function createPlayerIconNode(name) {
       const n = String(name || '').trim();
       if (!n) return null;
-      const st = iconCache.get(n);
-      if (st === 'fail') return null;
 
       const wrap = el('div', 'w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/20 border border-white/10 flex items-center justify-center overflow-hidden mb-1 mx-auto');
       const img = document.createElement('img');
@@ -967,36 +967,79 @@
       img.loading = 'lazy';
       img.decoding = 'async';
       img.referrerPolicy = 'no-referrer';
-      img.src = iconUrlForName(n);
       img.className = 'w-full h-full object-contain p-1';
 
-      img.addEventListener('load', () => {
-        iconCache.set(n, 'ok');
-      }, { once: true });
+      const idx = loadDriveIconIndex();
+      const driveId = idx[n] || null;
+      let triedDrive = false;
+      let triedFallback = false;
 
-      img.addEventListener('error', () => {
-        // If it failed while using fallback, keep as fail (avoid endless retries)
+      const setFallbackSrc = () => {
+        if (triedFallback) return;
+        triedFallback = true;
+        img.src = ICON_FALLBACK_BASE + encodeURIComponent(n) + '.png';
+      };
+
+      const setDriveSrc = (id) => {
+        if (!id) return;
+        triedDrive = true;
+        img.src = driveIconUrl(id);
+      };
+
+      // First attempt: Drive if we already know fileId; otherwise fallback first.
+      if (driveId) setDriveSrc(driveId);
+      else setFallbackSrc();
+
+      // Watchdog: if Drive image hangs/blocked and doesn't load quickly, fall back.
+      let loaded = false;
+      if (driveId) {
+        setTimeout(() => {
+          if (!wrap.isConnected) return;
+          if (loaded) return;
+          if (!triedFallback) setFallbackSrc();
+        }, 1200);
+      }
+
+      img.addEventListener('load', () => {
+        loaded = true;
+        iconCache.set(n, 'ok');
+      });
+
+      img.addEventListener('error', async () => {
+        // If Drive failed, drop cached id and fallback to CDN.
+        if (triedDrive && !triedFallback) {
+          try {
+            const idx2 = loadDriveIconIndex();
+            if (idx2[n]) {
+              delete idx2[n];
+              driveIconIndex = idx2;
+              saveDriveIconIndex();
+            }
+          } catch {}
+          setFallbackSrc();
+          return;
+        }
+
+        // If fallback failed too, stop showing icon for this name.
         iconCache.set(n, 'fail');
         try { wrap.remove(); } catch {}
-      }, { once: true });
+      });
 
       wrap.appendChild(img);
 
-      // Best-effort: resolve Google Drive fileId and switch src (if API key is provided)
-      try {
-        const idx = loadDriveIconIndex();
-        if (!idx[n] && DRIVE_API_KEY) {
-          resolveDriveFileIdByName(n).then((id) => {
-            if (!id) return;
-            if (!wrap.isConnected) return;
-            // If image already loaded from fallback, keep it; otherwise switch to Drive.
-            // (Drive is preferred, but fallback CDN may be faster.)
-            if (iconCache.get(n) !== 'ok') {
-              img.src = driveIconUrl(id);
-            }
-          }).catch(() => {});
-        }
-      } catch {}
+      // Best-effort: resolve Google Drive fileId and try Drive (preferred) if not cached yet.
+      // If Drive is unreachable (permissions / API restrictions), fallback already shows.
+      if (!driveId && DRIVE_API_KEY) {
+        resolveDriveFileIdByName(n).then((id) => {
+          if (!id) return;
+          // Cache + try switching to Drive only if still connected and not already loaded OK.
+          if (!wrap.isConnected) return;
+          if (iconCache.get(n) === 'ok') return;
+          setDriveSrc(id);
+        }).catch(() => {
+          // Ignore; fallback remains.
+        });
+      }
 
       return wrap;
     }
@@ -1061,6 +1104,22 @@
       if (bottomBar) bottomBar.classList.toggle('hidden', forceHideBar || collapsed);
       if (btnShowBar) btnShowBar.classList.toggle('hidden', forceHideBar || !collapsed);
       if (btnHideBar) btnHideBar.disabled = false;
+
+      // Hide table floating reveal panels while any modal is open (avoid blocking modal UI)
+      if (anyOpen) {
+        try {
+          document.querySelectorAll('[id^="seatFloat_"]').forEach(n => {
+            n.innerHTML = '';
+            n.classList.add('hidden');
+          });
+        } catch {}
+      } else {
+        try {
+          document.querySelectorAll('[id^="seatFloat_"]').forEach(n => {
+            n.classList.remove('hidden');
+          });
+        } catch {}
+      }
 
       // Danmaku should only show on the table (game page).
       // Allow showing during Chat (logModal), but hide during other modals to avoid blocking operations.
@@ -2943,6 +3002,8 @@
         broadcast({t:'dealerPickFinal', round: pick.round, dealerId});
         toast('已收到莊家指定，開始結算');
         revealRound();
+        // ensure host action button updates even in dealer-pick flow
+        try { updateMidActionButton(); } catch {}
         return;
       }
 
@@ -3504,25 +3565,131 @@
       const dealerReport = reportMap[dealerId] || {ok:false, bonus:0};
       const dealerReportOk = dealerReportCode !== 'none' && dealerReport.ok && dealerReport.bonus > 0;
 
-      // 特殊分支：莊家報到有效且沒有任何閒家報到有效時才套用「莊家報到」
-      if (dealerReportOk && !hasNonDealerReportOk) {
+      // 分支：莊家報到有效（本局不比三墩）
+      // - 若沒有任何閒家報到有效：所有閒家都被莊家報到扣分
+      // - 若同時存在閒家報到有效：
+      //   - 有報到的閒家：照閒家報到分數結算（莊家扣除）
+      //   - 沒報到的閒家：仍受莊家報到影響（-莊家報到分數）
+      // 注意：此分支只在「沒有擺烏龍」時適用；擺烏龍局走擺烏龍規則。
+      if (dealerReportOk && wulongSet.size === 0) {
         const bonus = dealerReport.bonus;
+
+        // 1) 只有莊家報到
+        if (!hasNonDealerReportOk) {
+          const results = {};
+
+          for (const id of ids) {
+            const sub = hostState.submissions[id];
+            const se = evalMap[id];
+            const isDealer = id === dealerId;
+
+            results[id] = {
+              total: isDealer ? (bonus * (ids.length - 1)) : -bonus,
+              note: isDealer ? `莊家報到+${bonus}×${ids.length - 1}（本局只計報到）` : `被莊家報到-${bonus}`,
+              per: {head:0, mid:0, tail:0},
+              report: sub.report || 'none',
+              evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
+              dealerCard: sub.dealerCard,
+            };
+          }
+
+          for (const id of ids) {
+            hostState.cumulative[id] = Number(hostState.cumulative[id] || 0) + Number(results[id]?.total || 0);
+          }
+
+          const payload = {
+            t:'reveal',
+            round: hostState.round,
+            dealerId,
+            results,
+            submissions: sanitizeSubsForBroadcast(),
+            players: allPlayersForBroadcast(),
+            cumulative: hostState.cumulative,
+          };
+
+          hostState.revealed = true;
+          broadcast(payload);
+
+          clientState.lastReveal = payload;
+          clientState.dealerId = dealerId;
+          clientState.cumulative = hostState.cumulative;
+          renderGameHeader();
+          renderScores(payload);
+          updateMyCumulative();
+          try { renderTableSeats(); playRevealOnTable(payload); } catch {}
+          $('btnOpenLastReveal').classList.remove('hidden');
+          updateMidActionButton();
+          try { updateMidActionButton(); } catch {}
+          glog('房主已結算本局');
+
+          if (hostState.round >= hostState.settings.roundsTotal) {
+            const overPayload = {
+              t:'gameOver',
+              roomId: myId,
+              players: allPlayersForBroadcast(),
+              cumulative: hostState.cumulative,
+            };
+            broadcast(overPayload);
+            clientState.pendingGameOver = {
+              roomId: myId,
+              players: overPayload.players,
+              cumulative: overPayload.cumulative,
+            };
+            glog('所有局數完成（關閉本局結算後顯示總結）');
+          }
+          return;
+        }
+
+        // 2) 莊家報到 + 存在閒家報到：莊家報到只對「未報到」閒家生效
         const results = {};
+        let dealerNet = 0;
+        let affectedCount = 0;
 
         for (const id of ids) {
           const sub = hostState.submissions[id];
           const se = evalMap[id];
-          const isDealer = id === dealerId;
+          const reportCode = sub.report || 'none';
+          const sp = reportMap[id] || {ok:true, bonus:0};
 
+          if (id === dealerId) continue;
+
+          // 閒家報到成功：只計閒家報到（莊家扣除）
+          if (reportCode !== 'none' && sp.ok && sp.bonus > 0) {
+            results[id] = {
+              total: sp.bonus,
+              note: `報到+${sp.bonus}（本局只計報到）`,
+              per: {head:0, mid:0, tail:0},
+              report: reportCode,
+              evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
+              dealerCard: sub.dealerCard,
+            };
+            dealerNet -= sp.bonus;
+            continue;
+          }
+
+          // 沒報到：受莊家報到影響（不比三墩）
           results[id] = {
-            total: isDealer ? (bonus * (ids.length - 1)) : -bonus,
-            note: isDealer ? `莊家報到+${bonus}×${ids.length - 1}（本局只計報到）` : `被莊家報到-${bonus}`,
+            total: -bonus,
+            note: `被莊家報到-${bonus}`,
             per: {head:0, mid:0, tail:0},
-            report: sub.report || 'none',
+            report: reportCode,
             evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
             dealerCard: sub.dealerCard,
           };
+          dealerNet += bonus;
+          affectedCount += 1;
         }
+
+        // dealer (net)
+        const dealerSe = evalMap[dealerId];
+        results[dealerId] = {
+          total: dealerNet,
+          note: `莊家報到+${bonus}×${affectedCount}（已扣除閒家報到；本局只計報到）`,
+          per: {head:0, mid:0, tail:0},
+          report: dealerReportCode,
+          evalNames: { head: dealerSe.head.name, mid: dealerSe.mid.name, tail: dealerSe.tail.name },
+          dealerCard: dealerSub.dealerCard,
+        };
 
         for (const id of ids) {
           hostState.cumulative[id] = Number(hostState.cumulative[id] || 0) + Number(results[id]?.total || 0);
@@ -3550,6 +3717,7 @@
         try { renderTableSeats(); playRevealOnTable(payload); } catch {}
         $('btnOpenLastReveal').classList.remove('hidden');
         updateMidActionButton();
+        try { updateMidActionButton(); } catch {}
         glog('房主已結算本局');
 
         if (hostState.round >= hostState.settings.roundsTotal) {
@@ -3701,10 +3869,7 @@
           note += (note?'｜':'') + (id === dealerId ? '報到不符' : '報到不符→擺烏龍');
         }
 
-        // 莊家報到被閒家優先：只做標註
-        if (id === dealerId && dealerReportOk && hasNonDealerReportOk) {
-          note += (note?'｜':'') + '莊報到被閒家優先';
-        }
+        // 莊家報到 + 閒家報到的分支已在前面處理（此處不再把莊家報到視作取消）
 
         if (id !== dealerId) dealerNet -= total;
 
@@ -4577,11 +4742,13 @@
     function updateMidActionButton() {
       const btn = $('btnMidAction');
       if (!btn) return;
-      const canNext = isHost && !!hostState.revealed;
-      btn.textContent = canNext ? '下一局' : '牌組';
+
+      // Host: show "下一局" as long as a round has been revealed (some flows may set lastReveal but not repaint revealed flag in time)
+      const hostCanNext = isHost && (!!hostState.revealed || !!clientState.lastReveal);
+      btn.textContent = hostCanNext ? '下一局' : '牌組';
 
       // Reset class to baseline then add active style
-      btn.className = 'flex-1 text-xs px-3 py-2 rounded-xl border ' + (canNext
+      btn.className = 'flex-1 text-xs px-3 py-2 rounded-xl border ' + (hostCanNext
         ? 'bg-gradient-to-b from-emerald-400 to-emerald-500 text-emerald-950 font-semibold border-emerald-200/20'
         : 'bg-white/10 hover:bg-white/15 text-slate-50 border-white/10');
     }
