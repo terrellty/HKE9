@@ -1,5 +1,5 @@
 /* HKE九張 PWA service worker (app shell) */
-const CACHE_NAME = 'hke9-pwa-v1';
+const CACHE_NAME = 'hke9-pwa-v2';
 const ASSETS = [
   './',
   './index.html',
