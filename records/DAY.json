@@ -1,1 +1,17 @@
-
+{
+  "roomId": "DAY",
+  "updatedAt": "2026-01-08T21:03:28.783Z",
+  "scoresByName": {
+    "玩家": -1
+  },
+  "history": [
+    {
+      "ts": "2026-01-08T21:03:28.671Z",
+      "round": 1,
+      "dealerName": "玩家（房主）",
+      "totalsByName": {
+        "玩家": -1
+      }
+    }
+  ]
+}
