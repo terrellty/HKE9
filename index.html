@@ -365,6 +365,10 @@
                   <div class="grid gap-1">
                     <label class="text-[11px] text-emerald-100/70">局數（5 的倍數）</label>
                     <input id="inpRounds" type="number" min="5" step="5" value="5" class="w-28 mono bg-black/35 border border-white/10 rounded-xl px-3 py-2 outline-none focus:border-amber-200/50" />
+                    <label class="inline-flex items-center gap-2 text-[11px] text-emerald-100/80 select-none">
+                      <input id="chkBBMode" type="checkbox" class="accent-amber-400" />
+                      BB 模式（關閉排牌限時）
+                    </label>
                   </div>
                   <button id="btnApplyRounds" class="hidden px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-[11px]">套用</button>
                   <div class="text-right">
@@ -2823,7 +2827,7 @@
 
     // Host state
     const hostState = {
-      settings: { roundsTotal: 5 },
+      settings: { roundsTotal: 5, bbMode: false },
       players: {}, // peerId -> {id,name,conn,joinedAt}
       seatOrder: [], // [hostId, ...playerIds] keeps seat positions stable (host-authoritative)
       round: 0,
@@ -2845,7 +2849,7 @@
       joining: false,
       players: {},
       seatOrder: [], // host-provided seat order (keeps positions stable)
-      settings: { roundsTotal: 5 },
+      settings: { roundsTotal: 5, bbMode: false },
       round: 0,
       dealerId: null,
       cards9: [],
@@ -2863,6 +2867,209 @@
       bottomBarCollapsed: true,
       readyMap: {}, // {peerId: boolean} latest ready status from host
     };
+
+    // -------------------- Persisted room record (DAY/NIG) via GitHub repo + Cloudflare Worker --------------------
+    // Goal: DAY/NIG rooms share a persistent scoreboard across devices.
+    // Read: public JSON from GitHub repo (raw.githubusercontent.com)
+    // Write: Cloudflare Worker (free) that holds a GitHub token and commits back to the repo.
+    // Fallback: always cache to localStorage so the host device can recover even if worker fails.
+
+    const PERSIST_ROOM_IDS = new Set(['DAY','NIG']);
+
+    // Where to store records in the GitHub repo
+    const PERSIST_REPO = {
+      owner: 'hketerrell',
+      repo: 'HKE9',
+      branch: 'main',
+      dir: 'records',
+    };
+
+    // Cloudflare Worker endpoint (you will deploy this). Leave empty to disable cloud write.
+    // You can also override at runtime via localStorage:
+    //   localStorage.setItem('ninePokerPersistWorkerUrl', 'https://<your-worker>.workers.dev');
+    // Optional shared secret (if your worker checks it):
+    //   localStorage.setItem('ninePokerPersistSecret', '...');
+    const DEFAULT_PERSIST_WORKER_URL = 'https://record.hke9.workers.dev';
+
+    const persistState = {
+      enabled: false,
+      roomId: '',
+      scoresByName: {}, // {name: number}
+      // NOTE: We intentionally do NOT keep per-round history for DAY/NIG.
+      // Only cumulative totals are stored.
+    };
+
+    function isPersistRoomId(id) {
+      const s = String(id||'').trim().toUpperCase();
+      return PERSIST_ROOM_IDS.has(s);
+    }
+
+    function persistKey(roomId, k) {
+      return `ninePokerPersist_${String(roomId||'').toUpperCase()}_${k}`;
+    }
+
+    function persistWorkerUrl() {
+      try {
+        const v = localStorage.getItem('ninePokerPersistWorkerUrl');
+        return (v && String(v).trim()) ? String(v).trim().replace(/\/+$/,'') : DEFAULT_PERSIST_WORKER_URL;
+      } catch {
+        return DEFAULT_PERSIST_WORKER_URL;
+      }
+    }
+
+    function persistWorkerSecret() {
+      try {
+        return (localStorage.getItem('ninePokerPersistSecret') || '').trim();
+      } catch {
+        return '';
+      }
+    }
+
+    function githubRawRecordUrl(roomId) {
+      const rid = String(roomId||'').trim().toUpperCase();
+      const {owner, repo, branch, dir} = PERSIST_REPO;
+      // bust avoids CDN/browser cache
+      return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dir}/${encodeURIComponent(rid)}.json?bust=${Date.now()}`;
+    }
+
+    async function githubReadRecord(roomId) {
+      const url = githubRawRecordUrl(roomId);
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.status === 404) return null;
+        if (!res.ok) {
+          const txt = await res.text().catch(()=> '');
+          dlog(`Persist(GH): read failed (${res.status}) ${roomId}: ${txt.slice(0,140)}`);
+          return null;
+        }
+        return await res.json();
+      } catch (e) {
+        dlog(`Persist(GH): read error ${roomId}: ${e?.message || e}`);
+        return null;
+      }
+    }
+
+    async function workerWriteRecord(roomId, record) {
+      const base = persistWorkerUrl();
+      if (!base) {
+        dlog('Persist(Worker): worker URL not set (localStorage ninePokerPersistWorkerUrl). Saved locally only.');
+        return false;
+      }
+      const secret = persistWorkerSecret();
+      const url = base + '/save';
+      try {
+        dlog(`Persist(Worker): POST ${url} room=${String(roomId||'').trim().toUpperCase()}`);
+      } catch {}
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(secret ? {'X-Persist-Key': secret} : {}),
+          },
+          body: JSON.stringify({ roomId: String(roomId||'').trim().toUpperCase(), record }),
+        });
+        const txt = await res.text().catch(()=> '');
+        if (!res.ok) {
+          dlog(`Persist(Worker): save failed (${res.status}) ${roomId}: ${txt.slice(0,160)}`);
+          return false;
+        }
+        dlog(`Persist(Worker): save OK ${roomId}`);
+        return true;
+      } catch (e) {
+        dlog(`Persist(Worker): save error ${roomId}: ${e?.message || e}`);
+        return false;
+      }
+    }
+
+    function applyPersistScoreForPeer(pid, name) {
+      const nm = String(name||'').trim();
+      if (!nm) return;
+      if (!persistState.enabled) return;
+      const v = Number(persistState.scoresByName?.[nm] || 0);
+      hostState.cumulative[pid] = v;
+    }
+
+    function refreshPersistScoresByNameFromCumulative() {
+      if (!persistState.enabled) return;
+      // IMPORTANT: merge into existing scores so absent players won't be erased.
+      const map = { ...(persistState.scoresByName || {}) };
+      // host
+      if (hostId) {
+        const hn = String(clientState.myName||'').trim();
+        if (hn) map[hn] = Number(hostState.cumulative[hostId] || 0);
+      }
+      for (const pid in (hostState.players||{})) {
+        const nm = String(hostState.players[pid]?.name||'').trim();
+        if (!nm) continue;
+        map[nm] = Number(hostState.cumulative[pid] || 0);
+      }
+      persistState.scoresByName = map;
+    }
+
+    function buildPersistRecordPayload() {
+      const roomId = persistState.roomId;
+      const now = new Date().toISOString();
+      // Only cumulative totals (no per-round history)
+      return {
+        roomId,
+        updatedAt: now,
+        scoresByName: persistState.scoresByName || {},
+      };
+    }
+
+    async function maybeLoadPersistRecordForHost(roomId) {
+      const rid = String(roomId||'').trim().toUpperCase();
+      if (!isPersistRoomId(rid)) return;
+      persistState.enabled = true;
+      persistState.roomId = rid;
+      try { dlog(`Persist: enabled for ${rid} | worker=${persistWorkerUrl()}`); } catch {}
+
+      // 1) local cache first
+      try {
+        const cached = localStorage.getItem(persistKey(rid,'record'));
+        if (cached) {
+          const json = JSON.parse(cached);
+          if (json && typeof json === 'object') {
+            persistState.scoresByName = json.scoresByName || {};
+            dlog(`Persist(GH): loaded local cache for ${rid}`);
+          }
+        }
+      } catch {}
+
+      // 2) GitHub raw (public)
+      const remote = await githubReadRecord(rid);
+      if (remote && typeof remote === 'object') {
+        persistState.scoresByName = remote.scoresByName || persistState.scoresByName || {};
+        try { localStorage.setItem(persistKey(rid,'record'), JSON.stringify({scoresByName: persistState.scoresByName})); } catch {}
+        dlog(`Persist(GH): loaded GitHub record for ${rid}`);
+      } else {
+        dlog(`Persist(GH): no GitHub record found for ${rid} (expected /${PERSIST_REPO.dir}/${rid}.json)`);
+      }
+
+      // Apply score to host now
+      try { applyPersistScoreForPeer(hostId, clientState.myName); } catch {}
+    }
+
+    async function maybeSavePersistRecordAfterRound() {
+      if (!isHost) return;
+      if (!persistState.enabled) return;
+      const rid = persistState.roomId;
+
+      refreshPersistScoresByNameFromCumulative();
+      const record = buildPersistRecordPayload();
+
+      // Always cache locally (works offline)
+      try {
+        localStorage.setItem(persistKey(rid,'record'), JSON.stringify({scoresByName: record.scoresByName}));
+        dlog(`Persist(Local): saved cache for ${rid} (names=${Object.keys(record.scoresByName||{}).length})`);
+      } catch (e) {
+        dlog(`Persist(Local): cache write failed for ${rid}: ${e?.message || e}`);
+      }
+
+      // Best-effort cloud save via worker
+      await workerWriteRecord(rid, record);
+    }
 
     function setRoleBadges() {
       const role = !peer ? '未連線' : (isHost ? '房主' : '玩家');
@@ -2884,6 +3091,12 @@
 
     function resetAll() {
       // stop keepalive/reconnect timers
+      try {
+        persistState.enabled = false;
+        persistState.roomId = '';
+        persistState.fileId = null;
+        persistState.scoresByName = {};
+      } catch {}
       try { stopHostHeartbeat(); } catch {}
       try { stopClientHeartbeat(); } catch {}
       try {
@@ -3459,6 +3672,13 @@
           disconnectedAt: null,
         };
 
+        // If this is a persisted room (DAY/NIG), apply cumulative by player name
+        try {
+          if (persistState.enabled) {
+            applyPersistScoreForPeer(pid, name);
+          }
+        } catch {}
+
         // Maintain seat order (host + join order). Keep host first.
         try {
           if (!Array.isArray(hostState.seatOrder) || hostState.seatOrder.length === 0) hostState.seatOrder = [hostId];
@@ -3685,6 +3905,7 @@
         clientState.settings = msg.settings || clientState.settings;
         clientState.cumulative = msg.cumulative || clientState.cumulative || {};
         $('inpRounds').value = clientState.settings.roundsTotal;
+        try { $('chkBBMode').checked = !!clientState.settings.bbMode; } catch {}
 
         // stop any pending reconnect loop
         try {
@@ -3726,7 +3947,8 @@
       if (msg.t === 'settings') {
         clientState.settings = msg.settings || clientState.settings;
         $('inpRounds').value = clientState.settings.roundsTotal;
-        log(`設定更新：局數 ${clientState.settings.roundsTotal}`);
+        try { $('chkBBMode').checked = !!clientState.settings.bbMode; } catch {}
+        log(`設定更新：局數 ${clientState.settings.roundsTotal}｜BB模式 ${clientState.settings.bbMode ? 'ON' : 'OFF'}`);
         return;
       }
 
@@ -3777,6 +3999,7 @@
         // Let players know a new round started, then open Arrange
         toast(`第 ${clientState.round} 局已開始，請排牌`);
         openArrangeModal();
+        startArrangeTimer();
         return;
       }
 
@@ -4013,9 +4236,15 @@
       v = Math.round(v/5)*5;
       if (v < 5) v = 5;
       $('inpRounds').value = v;
+
+      // BB mode (disable arrange timer)
+      const bb = !!$('chkBBMode')?.checked;
       hostState.settings.roundsTotal = v;
+      hostState.settings.bbMode = bb;
+      try { localStorage.setItem('ninePokerBBMode', bb ? '1' : '0'); } catch {}
+
       broadcast({t:'settings', settings: hostState.settings});
-      log(`房主設定局數：${v}`);
+      log(`房主設定：局數 ${v}｜BB模式 ${bb ? 'ON' : 'OFF'}`);
     }
 
     function startGame() {
@@ -4026,8 +4255,15 @@
         return;
       }
       hostState.round = 0;
-      hostState.cumulative = {};
-      clientState.cumulative = {};
+
+      // IMPORTANT: for DAY/NIG persistent rooms, do NOT reset cumulative.
+      if (!persistState.enabled) {
+        hostState.cumulative = {};
+        clientState.cumulative = {};
+      } else {
+        clientState.cumulative = hostState.cumulative;
+      }
+
       broadcast({t:'start', round: 1, settings: hostState.settings, cumulative: hostState.cumulative});
       showPage('game');
       $('gameRoomId').textContent = myId;
@@ -4278,6 +4514,13 @@
           try { updateMidActionButton(); } catch {}
           glog('房主已結算本局');
 
+          // Persist DAY/NIG record after each round (best-effort)
+          try {
+            if (persistState.enabled) {
+              maybeSavePersistRecordAfterRound().catch(()=>{});
+            }
+          } catch {}
+
           if (hostState.round >= hostState.settings.roundsTotal) {
             const overPayload = {
               t:'gameOver',
@@ -4377,6 +4620,13 @@
         updateMidActionButton();
         try { updateMidActionButton(); } catch {}
         glog('房主已結算本局');
+
+        // Persist DAY/NIG record after each round (best-effort)
+        try {
+          if (persistState.enabled) {
+            maybeSavePersistRecordAfterRound().catch(()=>{});
+          }
+        } catch {}
 
         if (hostState.round >= hostState.settings.roundsTotal) {
           const overPayload = {
@@ -4574,6 +4824,13 @@
       // Do NOT auto-open detailed reveal modal; show it only when user taps "本局結算"
       $('btnOpenLastReveal').classList.remove('hidden');
       updateMidActionButton();
+
+      // Persist DAY/NIG record after each round (best-effort)
+      try {
+        if (persistState.enabled) {
+          maybeSavePersistRecordAfterRound().catch(()=>{});
+        }
+      } catch {}
 
       if (hostState.round >= hostState.settings.roundsTotal) {
         const overPayload = {
@@ -5594,6 +5851,81 @@
     }
 
     // -------------------- Submit / Arrange --------------------
+    const ARRANGE_LIMIT_MS = 60000;
+    let arrangeTimer = null;
+
+    function stopArrangeTimer() {
+      if (arrangeTimer) {
+        clearTimeout(arrangeTimer);
+        arrangeTimer = null;
+      }
+    }
+
+    function autoFillRandomAllowFoul() {
+      // always produce a layout (may be wulong)
+      resetArrange();
+      const pool = [...(clientState.cards9 || [])];
+      shuffle(pool);
+      const dealer = clientState.dealerCard || pool.shift();
+      clientState.dealerCard = dealer;
+      // remove dealer from pool
+      const dk = cardKey(dealer);
+      const di = pool.findIndex(c => cardKey(c)===dk);
+      if (di >= 0) pool.splice(di,1);
+      if (pool.length < 8) return false;
+      const head = pool.slice(0,2);
+      const mid = pool.slice(2,5);
+      const tail = pool.slice(5,8);
+      clientState.arranged.head = head;
+      clientState.arranged.mid = mid;
+      clientState.arranged.tail = tail;
+      clientState.usedFromHand = new Set(pool.slice(0,8).map(cardKey));
+      renderGameHeader();
+      renderHand();
+      renderSlots();
+      return true;
+    }
+
+    function startArrangeTimer() {
+      stopArrangeTimer();
+      // BB mode disables timer
+      const bb = !!(isHost ? hostState.settings.bbMode : clientState.settings.bbMode);
+      if (bb) return;
+      if (!clientState.cards9 || clientState.cards9.length === 0) return;
+      if (clientState.submitted) return;
+
+      arrangeTimer = setTimeout(() => {
+        if (clientState.submitted) return;
+        const bb2 = !!(isHost ? hostState.settings.bbMode : clientState.settings.bbMode);
+        if (bb2) return;
+
+        toast('排牌逾時，自動排牌提交');
+
+        // try no-foul first; fallback allow foul
+        try {
+          autoFillRandomNoFoul();
+        } catch {}
+
+        // if still not filled, force random
+        const ok = (() => {
+          try {
+            const {head,mid,tail} = clientState.arranged;
+            return clientState.dealerCard && isAllFilled(head) && isAllFilled(mid) && isAllFilled(tail);
+          } catch { return false; }
+        })();
+
+        if (!ok) {
+          autoFillRandomAllowFoul();
+        }
+
+        // reset report to none to avoid accidental report
+        try { $('selReport').value = 'none'; } catch {}
+
+        // submit
+        try { submitArrangement(); } catch {}
+      }, ARRANGE_LIMIT_MS);
+    }
+
     function resetArrange() {
       clientState.arranged = { head:[null,null], mid:[null,null,null], tail:[null,null,null] };
       clientState.usedFromHand = new Set();
@@ -5767,15 +6099,34 @@
       setRoleBadges();
       log(custom ? `正在建立房間：${custom} …` : '正在建立房間…');
 
-      const intv = setInterval(() => {
+      const intv = setInterval(async () => {
         if (myId) {
           clearInterval(intv);
+
+          // Init seat order and persisted record (DAY/NIG)
+          try {
+            const rid = String(myId||'').trim().toUpperCase();
+            if (isPersistRoomId(rid)) {
+              await maybeLoadPersistRecordForHost(rid);
+            } else {
+              persistState.enabled = false;
+              persistState.roomId = '';
+            }
+          } catch {}
+
+          // If we loaded persisted scores for host, keep it; otherwise reset.
+          if (!persistState.enabled) {
+            hostState.cumulative = {};
+          } else {
+            // ensure host cumulative exists
+            try { applyPersistScoreForPeer(hostId, clientState.myName); } catch {}
+          }
+          clientState.cumulative = hostState.cumulative;
+
           broadcastPlayers();
           renderPlayers();
           setRoleBadges();
           hostApplyRounds();
-          hostState.cumulative = {};
-          clientState.cumulative = {};
           updateMyCumulative();
           setBadge(true, '房間已建立');
           log('房間已建立，等待玩家加入');
@@ -6266,6 +6617,15 @@
 
       applyNetConfigToUI();
       setTurnTestStatus('TURN 測試：尚未測試');
+
+      // BB mode (disable arrange timer) load
+      try {
+        const bb = localStorage.getItem('ninePokerBBMode');
+        if (bb === '1') {
+          clientState.settings.bbMode = true;
+          try { $('chkBBMode').checked = true; } catch {}
+        }
+      } catch {}
       const saved = localStorage.getItem('ninePokerName');
       if (saved) {
         clientState.myName = saved;
