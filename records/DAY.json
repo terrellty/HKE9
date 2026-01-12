@@ -1,8 +1,6 @@
 {
   "roomId": "DAY",
-  "updatedAt": "2026-01-08T22:21:43.290Z",
-  "scoresByName": {
-    "玩J": 1,
-    "玩家": -1
-  }
+  "updatedAt": "2026-01-12T13:00:32.286Z",
+  "periodKey": "2026-01-12",
+  "scoresByName": {}
 }
