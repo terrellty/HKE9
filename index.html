@@ -4543,13 +4543,14 @@
       return bestId;
     }
 
-    function revealRound() {
+function revealRound() {
       if (!isHost) return;
       if (hostState.revealed) return;
-
       // Ensure table reveal is visible for host (avoid being hidden under status modal)
-      try { $('statusModal')?.classList.add('hidden'); } catch {}
-      try { updateBodyOverflow(); } catch {}
+      try { $('statusModal')?.classList.add('hidden');
+      } catch {}
+      try { updateBodyOverflow();
+      } catch {}
 
       const ids = [hostId, ...Object.keys(hostState.players)];
       const missing = ids.filter(id => !hostState.submissions[id]);
@@ -4572,28 +4573,33 @@
         const sub = hostState.submissions[id];
         const se = { head: eval2(sub.head), mid: eval3(sub.mid), tail: eval3(sub.tail) };
         evalMap[id] = se;
-
         const all9 = [sub.dealerCard, ...sub.head, ...sub.mid, ...sub.tail];
         const sp = validateSpecial(sub.report, all9, sub, se);
         reportMap[id] = sp;
-
         foulMap[id] = detectFoul(sub.head, sub.mid, sub.tail);
       }
 
-      // 報到失敗 => 視為擺烏龍
+      // 擺烏龍判定修正：若報到有效，則無視排牌大小（不計為擺烏龍）
       const wulongSet = new Set();
       for (const id of ids) {
         const sub = hostState.submissions[id];
         const reportCode = sub.report || 'none';
         const sp = reportMap[id] || {ok:true, bonus:0};
+        
+        // 是否為有效報到
+        const isReportValid = (reportCode !== 'none' && sp.ok && sp.bonus > 0);
 
-        if (foulMap[id]?.foul) wulongSet.add(id);
-        if (reportCode !== 'none' && !(sp.ok && sp.bonus > 0)) {
-          wulongSet.add(id);
+        // 只有在「沒有有效報到」的情況下，才檢查頭中尾大小是否烏龍
+        if (!isReportValid && foulMap[id]?.foul) {
+            wulongSet.add(id);
+        }
+        // 報到但牌型不符 -> 視為擺烏龍
+        if (reportCode !== 'none' && !isReportValid) {
+            wulongSet.add(id);
         }
       }
 
-      // 決定莊家：照常用結算前指定或比選莊牌（擺烏龍不再強制當莊）
+      // 決定莊家：照常用結算前指定或比選莊牌
       let dealerId = hostState.dealerOverride || computeDealerIdFromSubmissions();
       hostState.dealerOverride = null;
       if (!dealerId) {
@@ -4604,7 +4610,6 @@
 
       const dealerSub = hostState.submissions[dealerId];
       const dealerEval = evalMap[dealerId];
-
       // 閒家報到成功優先於莊家報到成功
       let hasNonDealerReportOk = false;
       for (const id of ids) {
@@ -4623,23 +4628,16 @@
       const dealerReportOk = dealerReportCode !== 'none' && dealerReport.ok && dealerReport.bonus > 0;
 
       // 分支：莊家報到有效（本局不比三墩）
-      // - 若沒有任何閒家報到有效：所有閒家都被莊家報到扣分
-      // - 若同時存在閒家報到有效：
-      //   - 有報到的閒家：照閒家報到分數結算（莊家扣除）
-      //   - 沒報到的閒家：仍受莊家報到影響（-莊家報到分數）
-      // 注意：此分支只在「沒有擺烏龍」時適用；擺烏龍局走擺烏龍規則。
-      if (dealerReportOk && wulongSet.size === 0) {
+      // 修正：只要莊家報到有效就執行，不再檢查 wulongSet.size === 0（因有效報到者已從 wulongSet 排除）
+      if (dealerReportOk) {
         const bonus = dealerReport.bonus;
-
         // 1) 只有莊家報到
         if (!hasNonDealerReportOk) {
           const results = {};
-
           for (const id of ids) {
             const sub = hostState.submissions[id];
             const se = evalMap[id];
             const isDealer = id === dealerId;
-
             results[id] = {
               total: isDealer ? (bonus * (ids.length - 1)) : -bonus,
               note: isDealer ? `莊家報到+${bonus}×${ids.length - 1}（本局只計報到）` : `被莊家報到-${bonus}`,
@@ -4673,15 +4671,15 @@
           renderGameHeader();
           renderScores(payload);
           updateMyCumulative();
-          // update ready map for seat tick BEFORE rendering (avoid re-render wiping reveal animation)
-          try { clientState.readyMap = readyMapForBroadcast(); } catch {}
-          try { renderTableSeats(); playRevealOnTable(payload); } catch {}
+          try { clientState.readyMap = readyMapForBroadcast();
+          } catch {}
+          try { renderTableSeats(); playRevealOnTable(payload);
+          } catch {}
           $('btnOpenLastReveal').classList.remove('hidden');
           updateMidActionButton();
-          try { updateMidActionButton(); } catch {}
+          try { updateMidActionButton();
+          } catch {}
           glog('房主已結算本局');
-
-          // Persist DAY/NIG record after each round (best-effort)
           try {
             if (persistState.enabled) {
               maybeSavePersistRecordAfterRound().catch(()=>{});
@@ -4716,7 +4714,6 @@
           const se = evalMap[id];
           const reportCode = sub.report || 'none';
           const sp = reportMap[id] || {ok:true, bonus:0};
-
           if (id === dealerId) continue;
 
           // 閒家報到成功：只計閒家報到（莊家扣除）
@@ -4733,7 +4730,7 @@
             continue;
           }
 
-          // 沒報到：受莊家報到影響（不比三墩）
+          // 沒報到（或擺烏龍）：受莊家報到影響
           results[id] = {
             total: -bonus,
             note: `被莊家報到-${bonus}`,
@@ -4756,7 +4753,6 @@
           evalNames: { head: dealerSe.head.name, mid: dealerSe.mid.name, tail: dealerSe.tail.name },
           dealerCard: dealerSub.dealerCard,
         };
-
         for (const id of ids) {
           hostState.cumulative[id] = Number(hostState.cumulative[id] || 0) + Number(results[id]?.total || 0);
         }
@@ -4770,7 +4766,6 @@
           players: allPlayersForBroadcast(),
           cumulative: hostState.cumulative,
         };
-
         hostState.revealed = true;
         broadcast(payload);
 
@@ -4780,15 +4775,15 @@
         renderGameHeader();
         renderScores(payload);
         updateMyCumulative();
-        // update ready map for seat tick BEFORE rendering (avoid re-render wiping reveal animation)
-        try { clientState.readyMap = readyMapForBroadcast(); } catch {}
-        try { renderTableSeats(); playRevealOnTable(payload); } catch {}
+        try { clientState.readyMap = readyMapForBroadcast();
+        } catch {}
+        try { renderTableSeats(); playRevealOnTable(payload);
+        } catch {}
         $('btnOpenLastReveal').classList.remove('hidden');
         updateMidActionButton();
-        try { updateMidActionButton(); } catch {}
+        try { updateMidActionButton();
+        } catch {}
         glog('房主已結算本局');
-
-        // Persist DAY/NIG record after each round (best-effort)
         try {
           if (persistState.enabled) {
             maybeSavePersistRecordAfterRound().catch(()=>{});
@@ -4813,6 +4808,7 @@
         return;
       }
 
+      // --- 一般結算流程（含閒家擺烏龍處理） ---
       const results = {};
       let dealerNet = 0;
 
@@ -4821,16 +4817,11 @@
         const se = evalMap[id];
         const reportCode = sub.report || 'none';
         const sp = reportMap[id] || {ok:true, bonus:0};
-
         const wulongDealer = wulongSet.has(dealerId);
 
-        // 擺烏龍處理（不再強制當莊）：
-        // - 若莊家擺烏龍：莊家本局三墩全輸（扣分按正常規則計算），其他玩家照常與莊家比牌/報到。
-        // - 若閒家擺烏龍：該閒家本局只輸給莊家（三墩全輸，扣分按莊家牌型的正常分值計算）。
-
-        // 1) 閒家擺烏龍：只輸給莊家（仍可報到成功優先）
+        // 1) 閒家擺烏龍：只輸給莊家（但報到成功仍優先）
         if (id !== dealerId && wulongSet.has(id)) {
-          // 報到成功仍優先（不比三墩）
+          // 報到成功仍優先（因為已在前面被排除出 wulongSet，理論上不會進這行，但保留邏輯以防萬一）
           if (reportCode !== 'none' && sp.ok && sp.bonus > 0) {
             const total = sp.bonus;
             results[id] = {
@@ -4845,7 +4836,7 @@
             continue;
           }
 
-          // 強制三墩全輸：分數按「莊家該墩牌型」的正常分值計算
+          // 強制三墩全輸
           const per = {
             head: -headWinPoints(dealerEval.head),
             mid: -midWinPoints(dealerEval.mid),
@@ -4856,7 +4847,6 @@
           const note = (reportCode !== 'none' && !(sp.ok && sp.bonus > 0))
             ? '報到不符→擺烏龍（本局三墩全輸）'
             : '擺烏龍（本局三墩全輸）';
-
           results[id] = {
             total,
             note,
@@ -4869,10 +4859,7 @@
           continue;
         }
 
-        // 2) 莊家擺烏龍：莊家全輸（在 dealer net 會呈現），其他玩家照常計算
-        // 不在這裡特判閒家；閒家走正常/報到規則
-
-        // 報到有效（閒家）：不與莊對比頭中尾，直接得分＝報到分數（本局只計報到）
+        // 2) 報到有效（閒家）：不與莊對比，直接得分
         if (id !== dealerId && reportCode !== 'none' && sp.ok && sp.bonus > 0) {
           const total = sp.bonus;
           results[id] = {
@@ -4887,26 +4874,26 @@
           continue;
         }
 
-        // Normal compare vs dealer
+        // 3) 正常比牌（或莊家烏龍時閒家全勝）
         const per = {head:0,mid:0,tail:0};
         let total = 0;
         let noteParts = [];
 
         if (id !== dealerId) {
           if (wulongDealer) {
-            // 莊家擺烏龍：閒家三墩一律全勝（按自己的牌型分值計算）
+            // 莊家擺烏龍：閒家三墩一律全勝
             per.head = headWinPoints(se.head);
             per.mid  = midWinPoints(se.mid);
             per.tail = tailWinPoints(se.tail);
             total = per.head + per.mid + per.tail;
-            // 注意：不要在閒家備註寫入「擺烏龍」字眼，避免 UI 誤判顯示擺烏龍樣式
             noteParts.push('莊家失誤：三墩全勝');
           } else {
             per.head = headSectionScore(se.head, dealerEval.head);
             per.mid  = midSectionScore(se.mid, dealerEval.mid);
             per.tail = tailSectionScore(se.tail, dealerEval.tail);
             total = per.head + per.mid + per.tail;
-
+            
+            // 記錄加分細項
             if (Math.abs(per.head) !== 0 && (se.head.cat === 1 || dealerEval.head.cat === 1)) {
               if (per.head > 0 && se.head.cat === 1) noteParts.push(`頭墩對子+${headWinPoints(se.head)}`);
               if (per.head < 0 && dealerEval.head.cat === 1) noteParts.push(`頭墩對子-${headWinPoints(dealerEval.head)}`);
@@ -4933,16 +4920,12 @@
         }
 
         let note = noteParts.join('｜');
-
-        // 報到不符：視作擺烏龍（但若玩家就是莊家，僅標註）
+        // 報到不符但沒在前面被當烏龍處理（只有莊家可能？）
         if (reportCode !== 'none' && !(sp.ok && sp.bonus > 0)) {
           note += (note?'｜':'') + (id === dealerId ? '報到不符' : '報到不符→擺烏龍');
         }
 
-        // 莊家報到 + 閒家報到的分支已在前面處理（此處不再把莊家報到視作取消）
-
         if (id !== dealerId) dealerNet -= total;
-
         results[id] = {
           total,
           note,
@@ -4974,7 +4957,6 @@
         players: allPlayersForBroadcast(),
         cumulative: hostState.cumulative,
       };
-
       hostState.revealed = true;
       broadcast(payload);
 
@@ -4984,15 +4966,13 @@
       renderGameHeader();
       renderScores(payload);
       updateMyCumulative();
-      // update ready map for seat tick BEFORE rendering (so tick appears and we don't need to re-render after reveal)
-      try { clientState.readyMap = readyMapForBroadcast(); } catch {}
-      try { renderTableSeats(); playRevealOnTable(payload); } catch {}
+      try { clientState.readyMap = readyMapForBroadcast();
+      } catch {}
+      try { renderTableSeats(); playRevealOnTable(payload);
+      } catch {}
 
-      // Do NOT auto-open detailed reveal modal; show it only when user taps "本局結算"
       $('btnOpenLastReveal').classList.remove('hidden');
       updateMidActionButton();
-
-      // Persist DAY/NIG record after each round (best-effort)
       try {
         if (persistState.enabled) {
           maybeSavePersistRecordAfterRound().catch(()=>{});
