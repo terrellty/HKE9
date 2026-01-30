@@ -2517,7 +2517,7 @@
       return {cat: best.cat, t: best.t, name: best.name, usedJoker: true};
     }
 
-    function eval3NoJoker(cards) {
+function eval3NoJoker(cards) {
       const ranks = cards.map(c=>c.r).sort((a,b)=>b-a);
       const suits = cards.map(c=>c.s);
       const isFlush = suits.every(s=>s===suits[0]);
@@ -2525,19 +2525,33 @@
       const uniq = [...new Set(ranks)];
       const counts = {};
       for (const r of ranks) counts[r]=(counts[r]||0)+1;
-
       const sortedAsc = [...ranks].sort((a,b)=>a-b);
       let isStraight = false;
       let straightHigh = Math.max(...ranks);
+
       if (uniq.length === 3) {
+        // 一般順子判斷 (例如 4-5-6)
         if (sortedAsc[2]-sortedAsc[1]===1 && sortedAsc[1]-sortedAsc[0]===1) {
           isStraight = true;
           straightHigh = sortedAsc[2];
-        } else if (sortedAsc[0]===2 && sortedAsc[1]===3 && sortedAsc[2]===14) {
+          
+          // 【修正邏輯】如果是 Q-K-A (12,13,14)，原本最大是 14 (A)，
+          // 為了確保它大於 A-2-3，我們將其權重手動設為 15
+          if (straightHigh === 14) {
+            straightHigh = 15;
+          }
+        } 
+        // A-2-3 特殊順子判斷 (2,3,14)
+        else if (sortedAsc[0]===2 && sortedAsc[1]===3 && sortedAsc[2]===14) {
           isStraight = true;
-          straightHigh = 3;
+          
+          // 【修正邏輯】原本這裡是 straightHigh = 3 (導致比輸 4-5-6)
+          // 這裡改為 14，讓它大於一般的 K-Q-J (13)，僅次於 Q-K-A (15)
+          straightHigh = 14; 
         }
       }
+
+
 
       // 5 StraightFlush, 4 Trips, 3 Straight, 1 Pair, 0 High
       if (isStraight && isFlush) return {cat:5, t:[straightHigh], name:'同花順'};
