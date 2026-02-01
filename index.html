@@ -5295,7 +5295,12 @@ function revealRound() {
         badge.appendChild(iconRow);
 
         // Seat name line (dealer crown will be added during reveal)
-        const nameLine = el('div', 'text-xs font-black text-slate-50 truncate text-center', p.name + (p.isHost ? '（房主）' : ''));
+        // 1. 取得該玩家目前的累計分數
+        const curScore = clientState.cumulative[p.id] || 0;
+        const curScoreText = curScore > 0 ? `+${curScore}` : curScore;
+
+        // 2. 建立名稱時，直接包含分數
+        const nameLine = el('div', 'text-xs font-black text-slate-50 truncate text-center', `${p.name}${p.isHost ? '（房主）' : ''} ${curScoreText}`);
         nameLine.id = 'seatName_' + p.id;
         badge.appendChild(nameLine);
 
