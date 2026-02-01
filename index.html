@@ -4717,7 +4717,7 @@ function revealRound() {
               players: allPlayersForBroadcast(),
               cumulative: hostState.cumulative,
             };
-            broadcast(overPayload);
+            //broadcast(overPayload);
             clientState.pendingGameOver = {
               roomId: myId,
               players: overPayload.players,
@@ -4821,7 +4821,7 @@ function revealRound() {
             players: allPlayersForBroadcast(),
             cumulative: hostState.cumulative,
           };
-          broadcast(overPayload);
+          //broadcast(overPayload);
           clientState.pendingGameOver = {
             roomId: myId,
             players: overPayload.players,
