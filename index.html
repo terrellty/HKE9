@@ -916,61 +916,65 @@
     let updateCheckTimer = null;
 
     // ==========================================
-    // 新增：拖曳功能 (Drag & Drop)
+    // HKE九張 專用拖曳邏輯
     // ==========================================
-    let dragGhost = null;     // 移動中的視覺元素
+    let dragGhost = null;
     let isDragging = false;
-    let dragCardId = null;    // 被拖曳的卡牌 ID
-    let dragStartX, dragStartY;
+    let dragSrcRef = null; // 來源: {zone, key} 或 {zone, slot, idx}
 
-    function handleDragStart(e, cid) {
-      // 如果已經在拖曳中，忽略
-      if (isDragging) return;
-      
+    function handleDragStart(e, ref) {
+      if (clientState.submitted) return; // 已提交不可拖動
+      if (e.type === 'mousedown' && e.button !== 0) return; // 只允許左鍵
+
       const touch = e.touches ? e.touches[0] : e;
-      dragStartX = touch.clientX;
-      dragStartY = touch.clientY;
-      dragCardId = cid;
+      dragSrcRef = ref;
 
       // 建立視覺替身 (Ghost)
-      const target = e.currentTarget; 
-      // 複製被拖曳的卡牌樣式
+      const target = e.currentTarget;
       dragGhost = target.cloneNode(true);
       dragGhost.style.position = 'fixed';
       dragGhost.style.zIndex = '9999';
-      dragGhost.style.pointerEvents = 'none'; // 讓滑鼠事件能穿透替身偵測底下的 Slot
-      dragGhost.style.opacity = '0.8';
-      dragGhost.style.transform = 'scale(1.1) rotate(5deg)'; // 稍微放大傾斜
-      dragGhost.style.left = (touch.clientX - 40) + 'px'; // 簡易置中
-      dragGhost.style.top = (touch.clientY - 60) + 'px';
-      dragGhost.style.width = target.offsetWidth + 'px';
-      dragGhost.style.height = target.offsetHeight + 'px';
+      dragGhost.style.pointerEvents = 'none'; // 讓事件穿透
+      dragGhost.style.opacity = '0.85';
+      dragGhost.style.transform = 'scale(1.05) rotate(3deg)';
+      dragGhost.style.boxShadow = '0 10px 20px rgba(0,0,0,0.3)';
       
+      // 初始位置
+      const w = target.offsetWidth;
+      const h = target.offsetHeight;
+      dragGhost.style.width = w + 'px';
+      dragGhost.style.height = h + 'px';
+      dragGhost.style.left = (touch.clientX - w/2) + 'px';
+      dragGhost.style.top = (touch.clientY - h/2) + 'px';
+
       document.body.appendChild(dragGhost);
       isDragging = true;
 
-      // 綁定移動與結束事件
-      document.addEventListener('touchmove', handleDragMove, { passive: false });
-      document.addEventListener('touchend', handleDragEnd);
-      document.addEventListener('mousemove', handleDragMove);
-      document.addEventListener('mouseup', handleDragEnd);
+      // 綁定全域移動事件
+      if (e.type === 'touchstart') {
+        document.addEventListener('touchmove', handleDragMove, { passive: false });
+        document.addEventListener('touchend', handleDragEnd);
+      } else {
+        document.addEventListener('mousemove', handleDragMove);
+        document.addEventListener('mouseup', handleDragEnd);
+      }
     }
 
     function handleDragMove(e) {
       if (!isDragging || !dragGhost) return;
-      // 防止手機滑動畫面
-      if (e.cancelable) e.preventDefault(); 
+      if (e.cancelable) e.preventDefault(); // 防止手機滾動
 
       const touch = e.touches ? e.touches[0] : e;
-      dragGhost.style.left = (touch.clientX - (dragGhost.offsetWidth / 2)) + 'px';
-      dragGhost.style.top = (touch.clientY - (dragGhost.offsetHeight / 2)) + 'px';
+      const w = parseFloat(dragGhost.style.width);
+      const h = parseFloat(dragGhost.style.height);
+      dragGhost.style.left = (touch.clientX - w/2) + 'px';
+      dragGhost.style.top = (touch.clientY - h/2) + 'px';
     }
 
     function handleDragEnd(e) {
       if (!isDragging) return;
       isDragging = false;
       
-      // 移除視覺替身
       if (dragGhost) {
         dragGhost.remove();
         dragGhost = null;
@@ -982,28 +986,53 @@
       document.removeEventListener('mousemove', handleDragMove);
       document.removeEventListener('mouseup', handleDragEnd);
 
-      // 偵測放開位置底下的元素
+      // 偵測放開位置
       const touch = e.changedTouches ? e.changedTouches[0] : e;
-      // 暫時隱藏 ghost 確保 elementFromPoint 抓到的是底下的 slot
-      const elemBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+      // 尋找具備 data-drop-zone 屬性的元素
+      const targetElem = document.elementFromPoint(touch.clientX, touch.clientY);
+      const dropTarget = targetElem ? targetElem.closest('[data-drop-zone]') : null;
 
-      if (!elemBelow) return;
+      if (dropTarget && dragSrcRef) {
+        // 解析目標位置
+        const zone = dropTarget.dataset.zone;
+        let destRef = null;
 
-      // 尋找最近的卡槽 (Slot)
-      const slotDiv = elemBelow.closest('.my-slot-target');
-      
-      if (slotDiv && slotDiv.dataset.idx) {
-        const slotIdx = parseInt(slotDiv.dataset.idx, 10);
-        
-        // 觸發遊戲既有的放置邏輯
-        // 1. 先選取該卡牌
-        clientState.selectedCardId = dragCardId;
-        // 2. 呼叫點擊卡槽的函數
-        onMySlotClick(slotIdx);
-        // 3. 清除選取狀態 (避免看起來像還選著)
-        clientState.selectedCardId = null;
-        renderHand(); // 重繪以移除高亮
+        if (zone === 'hand') {
+            // 交換回手牌
+            // 這裡如果是手牌區，我們需要知道是哪一張牌，或是視為「移回手牌」
+            // 簡化：如果目標是具體的卡牌，就交換；如果是空白處，視為移回。
+            const cardTarget = targetElem.closest('[data-key]');
+            if (cardTarget) {
+                destRef = { zone: 'hand', key: cardTarget.dataset.key };
+            } else {
+                // 只是丟回手牌區，不指定交換對象（通常用於從卡槽拿下來）
+                // applySwapOrMove 支援單向移動
+                 destRef = { zone: 'hand', key: dragSrcRef.key }; 
+            }
+        } else if (zone === 'dealer') {
+            destRef = { zone: 'dealer' };
+        } else if (zone === 'slot') {
+            destRef = { 
+                zone: 'slot', 
+                slot: dropTarget.dataset.slot, 
+                idx: parseInt(dropTarget.dataset.idx) 
+            };
+        }
+
+        if (destRef) {
+            // 使用你程式碼中現有的 applySwapOrMove 函數
+            applySwapOrMove(dragSrcRef, destRef);
+            
+            // 清除原本的點擊選取狀態 (避免綠色框框殘留)
+            clearPick();
+            
+            // 更新畫面
+            renderGameHeader();
+            renderHand();
+            renderSlots();
+        }
       }
+      dragSrcRef = null;
     }
     
     // 【新增】統一取得「名字+房主+分數」的字串
