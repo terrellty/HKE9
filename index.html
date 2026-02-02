@@ -915,6 +915,97 @@
     let swReg = null;
     let updateCheckTimer = null;
 
+    // ==========================================
+    // 新增：拖曳功能 (Drag & Drop)
+    // ==========================================
+    let dragGhost = null;     // 移動中的視覺元素
+    let isDragging = false;
+    let dragCardId = null;    // 被拖曳的卡牌 ID
+    let dragStartX, dragStartY;
+
+    function handleDragStart(e, cid) {
+      // 如果已經在拖曳中，忽略
+      if (isDragging) return;
+      
+      const touch = e.touches ? e.touches[0] : e;
+      dragStartX = touch.clientX;
+      dragStartY = touch.clientY;
+      dragCardId = cid;
+
+      // 建立視覺替身 (Ghost)
+      const target = e.currentTarget; 
+      // 複製被拖曳的卡牌樣式
+      dragGhost = target.cloneNode(true);
+      dragGhost.style.position = 'fixed';
+      dragGhost.style.zIndex = '9999';
+      dragGhost.style.pointerEvents = 'none'; // 讓滑鼠事件能穿透替身偵測底下的 Slot
+      dragGhost.style.opacity = '0.8';
+      dragGhost.style.transform = 'scale(1.1) rotate(5deg)'; // 稍微放大傾斜
+      dragGhost.style.left = (touch.clientX - 40) + 'px'; // 簡易置中
+      dragGhost.style.top = (touch.clientY - 60) + 'px';
+      dragGhost.style.width = target.offsetWidth + 'px';
+      dragGhost.style.height = target.offsetHeight + 'px';
+      
+      document.body.appendChild(dragGhost);
+      isDragging = true;
+
+      // 綁定移動與結束事件
+      document.addEventListener('touchmove', handleDragMove, { passive: false });
+      document.addEventListener('touchend', handleDragEnd);
+      document.addEventListener('mousemove', handleDragMove);
+      document.addEventListener('mouseup', handleDragEnd);
+    }
+
+    function handleDragMove(e) {
+      if (!isDragging || !dragGhost) return;
+      // 防止手機滑動畫面
+      if (e.cancelable) e.preventDefault(); 
+
+      const touch = e.touches ? e.touches[0] : e;
+      dragGhost.style.left = (touch.clientX - (dragGhost.offsetWidth / 2)) + 'px';
+      dragGhost.style.top = (touch.clientY - (dragGhost.offsetHeight / 2)) + 'px';
+    }
+
+    function handleDragEnd(e) {
+      if (!isDragging) return;
+      isDragging = false;
+      
+      // 移除視覺替身
+      if (dragGhost) {
+        dragGhost.remove();
+        dragGhost = null;
+      }
+
+      // 移除監聽
+      document.removeEventListener('touchmove', handleDragMove);
+      document.removeEventListener('touchend', handleDragEnd);
+      document.removeEventListener('mousemove', handleDragMove);
+      document.removeEventListener('mouseup', handleDragEnd);
+
+      // 偵測放開位置底下的元素
+      const touch = e.changedTouches ? e.changedTouches[0] : e;
+      // 暫時隱藏 ghost 確保 elementFromPoint 抓到的是底下的 slot
+      const elemBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+
+      if (!elemBelow) return;
+
+      // 尋找最近的卡槽 (Slot)
+      const slotDiv = elemBelow.closest('.my-slot-target');
+      
+      if (slotDiv && slotDiv.dataset.idx) {
+        const slotIdx = parseInt(slotDiv.dataset.idx, 10);
+        
+        // 觸發遊戲既有的放置邏輯
+        // 1. 先選取該卡牌
+        clientState.selectedCardId = dragCardId;
+        // 2. 呼叫點擊卡槽的函數
+        onMySlotClick(slotIdx);
+        // 3. 清除選取狀態 (避免看起來像還選著)
+        clientState.selectedCardId = null;
+        renderHand(); // 重繪以移除高亮
+      }
+    }
+    
     // 【新增】統一取得「名字+房主+分數」的字串
     function getFormattedName(p) {
       // 1. 處理基本名稱
