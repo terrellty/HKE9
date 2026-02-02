@@ -5842,6 +5842,11 @@ function revealRound() {
     function renderDealerCardSlot() {
       const slot = $('dealerCardSlot');
       slot.innerHTML = '';
+      
+      // --- 新增 ---
+      slot.dataset.dropZone = 'true';
+      slot.dataset.zone = 'dealer';
+      // -----------
 
       if (!clientState.dealerCard) {
         const box = el('div', 'h-[62px] w-[44px] sm:h-[70px] sm:w-[50px] rounded-lg border border-dashed border-amber-200/30 bg-black/10 flex items-center justify-center text-[10px] font-black text-amber-100/90 text-center leading-snug', '選莊');
@@ -5867,6 +5872,12 @@ function revealRound() {
       const hand = $('hand');
       if (!hand) return;
       hand.innerHTML = '';
+      
+      // --- 新增 ---
+      hand.dataset.dropZone = 'true';
+      hand.dataset.zone = 'hand';
+      // -----------
+
       const cards = currentHandCards();
       for (let i=0;i<cards.length;i++) {
         const c = cards[i];
@@ -6059,6 +6070,14 @@ function revealRound() {
     function renderSlotCell(slotName, idx) {
       // Poker-card slot (match card aspect ratio) - ultra compact
       const cell = el('div', 'h-[62px] w-[44px] sm:h-[70px] sm:w-[50px] rounded-md border border-white/10 bg-black/20 p-[1px] flex items-center justify-center');
+      
+      // --- 新增開始 ---
+      // 標記這是一個可放置的區域
+      cell.dataset.dropZone = 'true';
+      cell.dataset.zone = 'slot';
+      cell.dataset.slot = slotName;
+      cell.dataset.idx = idx;
+      // --- 新增結束 ---
       const arr = clientState.arranged[slotName];
       const c = arr[idx];
 
