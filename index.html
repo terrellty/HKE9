@@ -1062,7 +1062,7 @@
       const btn = $('btnUpdateApp');
       if (!btn) return;
       const show = !!available && isLobbyVisible();
-      btn.classList.toggle('hidden', !show);
+      'btn.classList.toggle('hidden', !show);
       btn.classList.toggle('update-available', !!available);
       btn.title = available ? (info || '有新版本可更新') : '';
     }
