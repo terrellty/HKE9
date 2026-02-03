@@ -6805,8 +6805,14 @@ function revealRound() {
         saveNetConfig(cfg);
       } catch {}
 
-      const rid = ($('inpRoomId').value || '').trim();
-      if (!rid) return toast('請輸入房間號');
+      let rid = ($('inpRoomId').value || '').trim();
+      
+      // 原本是： if (!rid) return toast('請輸入房間號');
+      // 修改為： 若留空，自動設為 MON
+      if (!rid) {
+        rid = 'MON';
+      }
+      
       if (peer) resetAll();
       joinRoom(rid);
     });
