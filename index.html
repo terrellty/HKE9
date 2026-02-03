@@ -2894,38 +2894,41 @@ function eval3NoJoker(cards) {
         return pairs >= 4;
       };
 
-       const canMakeLength9Straight = (requireSameColor=null) => {
-        // requireSameColor: 'red' | 'black' | null
+      const canMakeLength9Straight = (requireSameColor=null) => {
         if (requireSameColor) {
-          if (requireSameColor === 'red' && nonJ.some(x => !isRed(x.s))) return false;
-          if (requireSameColor === 'black' && nonJ.some(x => !isBlack(x.s))) return false;
+            if (requireSameColor === 'red' && nonJ.some(x => !isRed(x.s))) return false;
+            if (requireSameColor === 'black' && nonJ.some(x => !isBlack(x.s))) return false;
         }
 
-        const ranks = nonJ.map(x => x.r);
-        const uniq = new Set(ranks);
-        if (uniq.size !== ranks.length) return false; // 一條龍不可有對子
+          const ranks = nonJ.map(x => x.r);
+          const uniq = new Set(ranks);
+          // 雜龍規則：非鬼牌部分不可有對子 (若有對子則無法構成 9 張連續)
+          if (uniq.size !== ranks.length) return false;
 
-        if (ranks.length === 0) return true; // 全鬼牌
+          // 全鬼牌或只剩1張牌，一定成功
+          if (ranks.length <= 1) return true;
 
-        // 檢查情況 1: Ace 當作 14 (例如 6-7-...-Q-K-A)
-        let minR = Math.min(...ranks);
-        let maxR = Math.max(...ranks);
-        const spanHigh = maxR - minR;
-        
-        // 檢查情況 2: Ace 當作 1 (例如 A-2-3-...-8-9)
-        let spanLow = 999;
-        if (ranks.includes(14)) {
-            // 將 14 (Ace) 暫時換成 1 來計算跨度
-            const lowRanks = ranks.map(r => r === 14 ? 1 : r);
-            const minL = Math.min(...lowRanks);
-            const maxL = Math.max(...lowRanks);
-            spanLow = maxL - minL;
-        }
+          // 邏輯：需要的鬼牌數量 = (最大值 - 最小值 + 1) - 實際張數
+          // 只要 缺少的張數 <= 擁有的鬼牌數 (jokers) 即可
 
-        // 只要任一種情況跨度 <= 8，且缺少的牌數夠鬼牌補，即成立
-        // 因不重複且假設鬼牌夠，只要 Span <= 8 即可
-        return (spanHigh <= 8) || (spanLow <= 8);
-      };
+          // 情況 1: Ace 當作 14 (例如 6,7,8,9,10,J,Q,K,A)
+          const max14 = Math.max(...ranks);
+          const min14 = Math.min(...ranks);
+          const need14 = (max14 - min14 + 1) - ranks.length;
+          if (need14 <= jokers) return true;
+
+          // 情況 2: Ace 當作 1 (例如 A,2,3,4,5,6,7,8,9)
+          if (ranks.includes(14)) {
+            // 把 14 轉成 1
+            const ranks1 = ranks.map(r => r === 14 ? 1 : r);
+            const max1 = Math.max(...ranks1);
+            const min1 = Math.min(...ranks1);
+            const need1 = (max1 - min1 + 1) - ranks1.length;
+            if (need1 <= jokers) return true;
+          }
+
+          return false;
+        };
 
       // 2/3/3 版本的「三蛇 / 三同花順 / 百無」用各墩判斷（頭墩為 2 張用 canBeStraight2/canBeFlush2）
       const head = sub?.head || [];
