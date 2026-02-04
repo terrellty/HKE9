@@ -717,7 +717,7 @@
     
     <div class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
       
-      <div class="pointer-events-auto relative flex flex-row items-center justify-center gap-4 sm:gap-8 p-4 w-full max-w-5xl h-full max-h-[90vh]">
+      <div class="pointer-events-auto relative flex flex-row items-center justify-center gap-4 sm:gap-10 p-4 w-full max-w-5xl h-full max-h-[85vh]">
          
          <div class="absolute top-0 left-4 z-30 flex flex-col items-start shadow-black drop-shadow-md">
             <div class="text-[10px] text-emerald-100/60">排牌階段</div>
@@ -728,13 +728,13 @@
             ✕
          </button>
 
-         <div class="flex flex-col gap-3 select-none">
+         <div class="flex flex-col justify-center gap-6 select-none h-full w-auto">
              
              <div class="flex items-center gap-2 justify-end">
                 <div class="flex flex-col items-center justify-center text-[10px] font-bold text-emerald-100/50 leading-none gap-0.5">
                     <span>頭</span><span>墩</span>
                 </div>
-                <div id="slotHead" class="grid grid-cols-2 gap-1"></div>
+                <div id="slotHead" class="grid grid-cols-2 gap-1.5"></div>
                 <div class="w-[50px] sm:w-[58px]"></div> 
              </div>
 
@@ -742,18 +742,18 @@
                 <div class="flex flex-col items-center justify-center text-[10px] font-bold text-emerald-100/50 leading-none gap-0.5">
                     <span>中</span><span>墩</span>
                 </div>
-                <div id="slotMid" class="grid grid-cols-3 gap-1"></div>
+                <div id="slotMid" class="grid grid-cols-3 gap-1.5"></div>
              </div>
 
              <div class="flex items-center gap-2 justify-end">
                  <div class="flex flex-col items-center justify-center text-[10px] font-bold text-emerald-100/50 leading-none gap-0.5">
                     <span>尾</span><span>墩</span>
                 </div>
-                <div id="slotTail" class="grid grid-cols-3 gap-1"></div>
+                <div id="slotTail" class="grid grid-cols-3 gap-1.5"></div>
              </div>
          </div>
 
-         <div class="flex flex-col w-32 shrink-0 gap-3">
+         <div class="flex flex-col w-32 shrink-0 gap-3 justify-center">
              
              <div class="flex flex-col items-center gap-1 p-2 rounded-xl bg-white/5 border border-white/5">
                 <div class="text-[10px] text-amber-100/60 font-bold">選莊</div>
@@ -5969,32 +5969,82 @@ function revealRound() {
     }
 
     function renderHand() {
-      updateSelectedHint();
-      const hand = $('hand');
-      if (!hand) return;
-      hand.innerHTML = '';
+      const handEl = $('hand');
+      handEl.innerHTML = '';
       
-      // --- 新增 ---
-      hand.dataset.dropZone = 'true';
-      hand.dataset.zone = 'hand';
-      // -----------
+      // 確保手牌區有過渡動畫效果 (Transition)
+      handEl.classList.add('transition-all', 'duration-300', 'ease-out');
 
-      const cards = currentHandCards();
-      for (let i=0;i<cards.length;i++) {
-        const c = cards[i];
-        const key = cardKey(c);
-        const selected = clientState.pick?.zone==='hand' && clientState.pick.key===key;
-        const btn = renderCard(c, {variant:'hand', selected});
+      // 整理剩餘的手牌
+      const remaining = [];
+      clientState.cards9.forEach(c => {
+        if (!clientState.usedFromHand.has(c)) {
+          remaining.push(c);
+        }
+      });
+      
+      // 排序
+      const suitOrder = { 's':4, 'h':3, 'd':2, 'c':1 };
+      const rankOrder = { 
+        'A':14, 'K':13, 'Q':12, 'J':11, '10':10, '9':9, '8':8, '7':7, '6':6, '5':5, '4':4, '3':3, '2':2 
+      };
+      
+      remaining.sort((a,b) => {
+        const ra = rankOrder[a.slice(0,-1)] || 0;
+        const rb = rankOrder[b.slice(0,-1)] || 0;
+        if (ra !== rb) return ra - rb;
+        const sa = suitOrder[a.slice(-1)] || 0;
+        const sb = suitOrder[b.slice(-1)] || 0;
+        return sa - sb;
+      });
 
-        // Overlap like a real hand: each next card covers ~50%
-        if (i > 0) btn.classList.add('hand-overlap');
-        btn.style.zIndex = selected ? String(50 + i) : String(i);
+      // 渲染卡牌
+      remaining.forEach(cardStr => {
+        const div = document.createElement('div');
+        div.className = 'relative group cursor-grab active:cursor-grabbing touch-none';
+        
+        // 拖曳功能
+        div.draggable = true;
+        
+        // ---【新增】拖曳時隱藏手牌區邏輯 ---
+        div.ondragstart = (e) => {
+           e.dataTransfer.setData('text/plain', cardStr);
+           clientState.selectedCardKey = cardStr; // 記錄當前拖曳的牌
+           
+           // 加入位移 class，將手牌區推到螢幕下方
+           handEl.classList.add('translate-y-[150%]', 'opacity-0');
+        };
+        
+        div.ondragend = (e) => {
+           clientState.selectedCardKey = null;
+           
+           // 移除位移 class，手牌區彈回
+           handEl.classList.remove('translate-y-[150%]', 'opacity-0');
+        };
+        // -----------------------------------
 
-        btn.classList.add('deal-card');
-        btn.style.animationDelay = `${Math.min(10,i)*35}ms`;
-        btn.addEventListener('click', () => onPick({zone:'hand', key}));
-        hand.appendChild(btn);
-      }
+        // 點擊選擇功能 (保留原有邏輯)
+        div.onclick = () => {
+          if (clientState.pick === cardStr) {
+             clientState.pick = null;
+          } else {
+             clientState.pick = cardStr;
+          }
+          renderHand();
+        };
+
+        const img = getCardImg(cardStr);
+        img.className = 'w-[50px] sm:w-[58px] h-auto shadow-md rounded-lg bg-slate-200 pointer-events-none';
+        
+        if (clientState.pick === cardStr) {
+          img.classList.add('ring-2','ring-amber-400','-translate-y-2');
+        } else {
+           img.classList.add('hover:-translate-y-1', 'transition-transform');
+        }
+
+        div.appendChild(img);
+        handEl.appendChild(div);
+      });
     }
 
     function labelForKey(key) {
