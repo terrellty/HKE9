@@ -7093,7 +7093,7 @@ function revealRound() {
     // Arrange modal events
     $('btnOpenArrange').addEventListener('click', openArrangeModal);
     $('btnCloseArrange').addEventListener('click', closeArrangeModal);
-    $('btnCloseArrange2').addEventListener('click', closeArrangeModal);
+    $('btnCloseArrange2')?.addEventListener('click', closeArrangeModal);
     $('arrangeBackdrop').addEventListener('click', closeArrangeModal);
 
     // Table center button is re-created by renderTableSeats(); its click handler is bound there.
