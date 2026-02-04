@@ -5980,7 +5980,7 @@ function revealRound() {
       // -----------
 
       if (!clientState.dealerCard) {
-        const box = el('div', 'h-[50px] w-[70px] sm:h-[58px] sm:w-[80px] rounded-lg border-2 border-dashed border-amber-200/30 bg-amber-400/5 flex items-center justify-center text-xs font-bold text-amber-100/50', '莊');
+        const box = el('div', 'h-[70px] w-[50px] sm:h-[80px] sm:w-[58px] rounded-lg border-2 border-dashed border-amber-200/30 bg-amber-400/5 flex items-center justify-center text-xs font-bold text-amber-100/50', '莊');
         box.addEventListener('click', (e) => {
           if (e.target.closest('button')) return;
           if (clientState.submitted) return;
@@ -6225,7 +6225,7 @@ function revealRound() {
 
     function renderSlotCell(slotName, idx) {
       // Poker-card slot (match card aspect ratio) - ultra compact
-      const cell = el('div', 'h-[50px] w-[70px] sm:h-[58px] sm:w-[80px] rounded-lg border-2 border-white/10 bg-white/5 flex items-center justify-center transition-colors');
+      const cell = el('div', 'h-[70px] w-[50px] sm:h-[80px] sm:w-[58px] rounded-lg border-2 border-white/10 bg-white/5 flex items-center justify-center transition-colors');
       
       // --- 新增開始 ---
       // 標記這是一個可放置的區域
