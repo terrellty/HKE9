@@ -76,13 +76,13 @@
      /* --- 新的 pc-slot 設定 (加大) --- */
     .poker-card.pc-slot {
       /* 透過 CSS 定義基礎大小，JS 中也會有對應 class，這裡做雙重確保 */
-      width: 54px; 
-      height: 76px;
+      width: 50px; 
+      height: 70px;
     }
     @media (min-width: 640px) {
       .poker-card.pc-slot {
-        width: 64px; 
-        height: 90px;
+        width: 58px; 
+        height: 80px;
       }
     }
 
@@ -92,7 +92,7 @@
     
     /* 極大化中間花色 */
     .poker-card.pc-slot .pcenter { 
-      font-size: 50px; 
+      font-size: 40px; 
       line-height: 1;
     }
 
@@ -715,56 +715,63 @@
 <div id="arrangeModal" class="hidden fixed inset-0 z-[53]">
     <div class="absolute inset-0 backdrop" id="arrangeBackdrop"></div>
     
-    <div class="absolute inset-0 z-10 flex flex-col bg-slate-950/90 h-full w-full">
+    <div class="absolute inset-0 z-10 flex flex-col bg-slate-950/90 h-full w-full pointer-events-auto">
       
-      <div class="shrink-0 flex items-center justify-between px-4 py-2 border-b border-white/10 bg-black/40 backdrop-blur-md">
+      <div class="shrink-0 flex items-center justify-between px-4 py-2 border-b border-white/10 bg-black/40 backdrop-blur-md relative z-20">
          <div class="flex flex-col">
             <div class="text-[10px] text-emerald-100/60">排牌階段</div>
             <div id="arrangeTimerText" class="text-sm font-bold text-emerald-100 mono">--</div>
          </div>
          
          <div class="flex gap-2">
-            <button id="btnAutoFill" class="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200">快速</button>
-            <button id="btnResetArrange" class="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200">重排</button>
-            <button id="btnCloseArrange" class="text-xs px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-100">關閉</button>
+            <button id="btnAutoFill" class="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200 active:scale-95 transition">快速</button>
+            <button id="btnResetArrange" class="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200 active:scale-95 transition">重排</button>
+            <button id="btnCloseArrange" class="text-xs px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-100 active:scale-95 transition">關閉</button>
          </div>
       </div>
 
-      <div class="flex-1 w-full h-full flex items-center justify-center p-1 overflow-hidden">
-        <div class="flex flex-row items-center gap-4 sm:gap-8 max-w-4xl">
+      <div class="flex-1 w-full h-full overflow-y-auto overflow-x-hidden relative">
+        <div class="flex flex-row items-center justify-center gap-2 sm:gap-6 min-h-full pb-40 p-2">
           
-          <div class="flex flex-col gap-1.5">
+          <div class="flex flex-col gap-2 select-none">
              
              <div class="flex items-center gap-2 justify-end">
-                <div class="text-[10px] font-bold text-emerald-100/50 writing-vertical-lr transform rotate-180">頭墩</div>
+                <div class="flex flex-col items-center justify-center text-[10px] font-bold text-emerald-100/50 leading-none gap-0.5">
+                    <span>頭</span><span>墩</span>
+                </div>
                 <div id="slotHead" class="grid grid-cols-2 gap-1"></div>
-                <div class="w-[52px] sm:w-[60px]"></div> 
+                <div class="w-[50px] sm:w-[58px]"></div> 
              </div>
 
              <div class="flex items-center gap-2 justify-end">
-                <div class="text-[10px] font-bold text-emerald-100/50 writing-vertical-lr transform rotate-180">中墩</div>
+                <div class="flex flex-col items-center justify-center text-[10px] font-bold text-emerald-100/50 leading-none gap-0.5">
+                    <span>中</span><span>墩</span>
+                </div>
                 <div id="slotMid" class="grid grid-cols-3 gap-1"></div>
              </div>
 
              <div class="flex items-center gap-2 justify-end">
-                <div class="text-[10px] font-bold text-emerald-100/50 writing-vertical-lr transform rotate-180">尾墩</div>
+                <div class="flex flex-col items-center justify-center text-[10px] font-bold text-emerald-100/50 leading-none gap-0.5">
+                    <span>尾</span><span>墩</span>
+                </div>
                 <div id="slotTail" class="grid grid-cols-3 gap-1"></div>
              </div>
           </div>
 
-          <div class="flex flex-col justify-between h-[240px] w-32 shrink-0 py-1">
+          <div class="flex flex-col justify-between h-[230px] w-28 sm:w-32 shrink-0 py-1 select-none">
              
-             <div class="flex flex-col items-center">
-                <div id="dealerCardSlot" class="shrink-0 shadow-[0_0_20px_rgba(251,191,36,0.1)]"></div>
+             <div class="flex flex-col items-center gap-1">
+                <div class="text-[10px] text-amber-100/60 font-bold">選莊</div>
+                <div id="dealerCardSlot" class="shrink-0 shadow-[0_0_20px_rgba(251,191,36,0.15)]"></div>
              </div>
 
-             <div class="flex flex-col gap-2">
+             <div class="flex flex-col gap-2 relative z-10">
                 <div class="flex flex-col gap-1">
                    <div class="flex justify-between items-end">
-                      <label class="text-[10px] text-emerald-100/40">特殊報到</label>
+                      <label class="text-[10px] text-emerald-100/40">報到</label>
                       <span id="submitStatus2" class="text-[10px] text-emerald-100/80 scale-90 origin-right">—</span>
                    </div>
-                   <select id="selReport" class="bg-black/40 border border-white/20 rounded px-1 py-1 text-[11px] text-slate-200 outline-none w-full">
+                   <select id="selReport" class="bg-slate-800 border border-white/20 rounded px-1 py-1.5 text-[11px] text-slate-100 outline-none w-full appearance-none text-center font-bold shadow-sm">
                       <option value="none">無 (不報到)</option>
                       <option value="allRed">全紅 +5</option>
                       <option value="allBlack">全黑 +5</option>
@@ -779,7 +786,7 @@
                     </select>
                 </div>
                 
-                <button id="btnSubmit" class="w-full py-2.5 rounded-lg bg-gradient-to-r from-amber-400 to-amber-600 text-black font-black text-xs shadow-lg hover:brightness-110 active:scale-95 transition-transform">
+                <button id="btnSubmit" class="w-full py-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-600 text-black font-black text-xs shadow-lg hover:brightness-110 active:scale-95 transition-transform">
                   提交
                 </button>
              </div>
@@ -787,7 +794,6 @@
 
         </div>
       </div>
-      
     </div>
 </div>
 
@@ -5937,7 +5943,7 @@ function revealRound() {
       // -----------
 
       if (!clientState.dealerCard) {
-        const box = el('div', 'h-[76px] w-[54px] sm:h-[90px] sm:w-[64px] rounded-lg border-2 border-dashed border-amber-200/30 bg-amber-400/5 flex items-center justify-center text-xs font-bold text-amber-100/50', '莊');
+        const box = el('div', 'h-[50px] w-[70px] sm:h-[58px] sm:w-[80px] rounded-lg border-2 border-dashed border-amber-200/30 bg-amber-400/5 flex items-center justify-center text-xs font-bold text-amber-100/50', '莊');
         box.addEventListener('click', (e) => {
           if (e.target.closest('button')) return;
           if (clientState.submitted) return;
@@ -6157,7 +6163,7 @@ function revealRound() {
 
     function renderSlotCell(slotName, idx) {
       // Poker-card slot (match card aspect ratio) - ultra compact
-      const cell = el('div', 'h-[76px] w-[54px] sm:h-[90px] sm:w-[64px] rounded-lg border-2 border-white/10 bg-white/5 flex items-center justify-center transition-colors');
+      const cell = el('div', 'h-[50px] w-[70px] sm:h-[58px] sm:w-[80px] rounded-lg border-2 border-white/10 bg-white/5 flex items-center justify-center transition-colors');
       
       // --- 新增開始 ---
       // 標記這是一個可放置的區域
