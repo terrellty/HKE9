@@ -472,10 +472,10 @@
       </div>
 
       <!-- Hand Dock (fixed, above bottom bar) - only shown while Arrange Modal is open -->
-      <div id="handDock" class="hand-dock fixed left-0 right-0 bottom-[56px] z-[56] hidden">
-        <div class="mx-auto max-w-5xl px-2">
+      <div id="handDock" class="hand-dock fixed left-0 right-0 bottom-0 z-[56] hidden pointer-events-none">
+        <div class="mx-auto max-w-5xl px-2 pb-2 pointer-events-auto">
           <div class="rounded-2xl p-0"> 
-            <div id="hand" class="flex gap-0 overflow-x-auto overflow-y-hidden pl-1 pr-10 pb-2 flex-nowrap" style="min-height: 100px;"></div>
+            <div id="hand" class="flex gap-0 overflow-x-auto overflow-y-hidden pl-1 pr-10 pb-4 flex-nowrap min-h-[110px] items-end"></div>
           </div>
         </div>
       </div>
@@ -712,89 +712,88 @@
   </div>
 
   <!-- Arrange Modal (your hand arrangement) -->
-  <div id="arrangeModal" class="hidden fixed inset-0 z-[53]">
+<div id="arrangeModal" class="hidden fixed inset-0 z-[53]">
     <div class="absolute inset-0 backdrop" id="arrangeBackdrop"></div>
-    <!-- Compact layout for landscape: reserve space for the Hand Dock -->
-    <div class="absolute inset-0 flex items-start justify-center p-0 pb-10">
-      <div class="w-full h-full sm:max-w-5xl panel border-0 sm:border sm:rounded-2xl border-amber-200/20 modal-in flex flex-col overflow-hidden bg-black/80">
+    
+    <div class="absolute inset-0 z-10 flex flex-col bg-slate-950/90 h-full w-full">
+      
+      <div class="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/40 backdrop-blur-md">
+         <div class="flex flex-col">
+            <div class="text-[10px] text-emerald-100/60">排牌階段</div>
+            <div id="arrangeTimerText" class="text-sm font-bold text-emerald-100 mono">--</div>
+         </div>
+         
+         <div class="flex gap-2">
+            <button id="btnAutoFill" class="text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200">快速</button>
+            <button id="btnResetArrange" class="text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200">重排</button>
+            <button id="btnCloseArrange" class="text-xs px-3 py-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-100">關閉</button>
+         </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto overflow-x-hidden w-full relative pb-[220px]">
         
-        <div class="p-2 border-b border-white/10 flex items-center justify-end gap-1.5 shrink-0 bg-black/40">
-          <div class="sr-only">排牌 / 提交</div>
-          <div id="arrangeTimerText" class="mr-auto text-[12px] text-emerald-100/70 mono font-bold">—</div>
-          <button id="btnAutoFill" class="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">快速排</button>
-          <button id="btnResetArrange" class="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">重排</button>
-          <button id="btnCloseArrange" class="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">關閉</button>
-        </div>
-
-        <div class="flex-1 overflow-y-auto overflow-x-hidden relative flex flex-col">
+        <div class="w-full max-w-2xl mx-auto p-2 flex flex-col gap-6 mt-6">
           
-          <div class="w-full max-w-lg mx-auto p-2 flex flex-col gap-4 sm:gap-6 mt-4 pb-40">
-            
-            <div class="flex items-end justify-center gap-4">
-               <div class="flex flex-col items-center gap-1">
-                  <div class="flex items-center gap-2 mb-1">
-                    <span class="text-[12px] text-emerald-100/80 font-bold">頭墩 (2)</span>
-                    <span id="headEval" class="text-[11px] text-emerald-100/60 mono">—</span>
-                  </div>
-                  <div id="slotHead" class="grid grid-cols-2 gap-1 shrink-0 items-center"></div>
-               </div>
+          <div class="flex items-end justify-center gap-6">
+             <div class="flex flex-col items-center gap-1">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-xs text-emerald-100/80 font-bold">頭墩 (2)</span>
+                  <span id="headEval" class="text-[10px] text-emerald-100/50 mono">—</span>
+                </div>
+                <div id="slotHead" class="grid grid-cols-2 gap-2 shrink-0 items-center"></div>
+             </div>
 
-               <div class="flex flex-col items-center gap-1 ml-2">
-                  <span class="text-[12px] text-amber-100/80 font-bold mb-1">選莊</span>
-                  <div id="dealerCardSlot" class="shrink-0"></div>
-               </div>
-            </div>
-
-            <div class="flex flex-col items-center gap-1">
-               <div class="flex items-center gap-2 mb-1">
-                  <span class="text-[12px] text-emerald-100/80 font-bold">中墩 (3)</span>
-                  <span id="midEval" class="text-[11px] text-emerald-100/60 mono">—</span>
-               </div>
-               <div id="slotMid" class="grid grid-cols-3 gap-1 shrink-0 items-center"></div>
-            </div>
-
-            <div class="flex flex-col items-center gap-1">
-               <div class="flex items-center gap-2 mb-1">
-                  <span class="text-[12px] text-emerald-100/80 font-bold">尾墩 (3)</span>
-                  <span id="tailEval" class="text-[11px] text-emerald-100/60 mono">—</span>
-               </div>
-               <div id="slotTail" class="grid grid-cols-3 gap-1 shrink-0 items-center"></div>
-            </div>
-
+             <div class="flex flex-col items-center gap-1 pb-[2px]"> <span class="text-xs text-amber-100/80 font-bold mb-1">選莊</span>
+                <div id="dealerCardSlot" class="shrink-0 shadow-[0_0_15px_rgba(251,191,36,0.15)]"></div>
+             </div>
           </div>
-        </div>
 
-        <div class="p-2 border-t border-white/10 bg-black/60 shrink-0 z-[60] mb-[120px]"> 
-          <div class="flex items-center gap-2 justify-center max-w-lg mx-auto">
-            <div class="text-[11px] text-emerald-100/80 shrink-0">報到</div>
-            <select id="selReport" class="flex-1 bg-black/50 border border-white/20 rounded-xl px-3 py-2 text-xs outline-none focus:border-amber-200/50 text-white">
-              <option value="none">不報</option>
-              <option value="allRed">全紅 +5</option>
-              <option value="allBlack">全黑 +5</option>
-              <option value="threeSnake">三蛇 +3</option>
-              <option value="fourKind">4條 +10</option>
-              <option value="fourPairs">4對 +10</option>
-              <option value="mixedDragon">雜龍 +15</option>
-              <option value="threeStraightFlush">3同花順 +25</option>
-              <option value="twoFourKind">2個4條 +30</option>
-              <option value="greenDragon">青龍 +100</option>
-              <option value="noHand">百無 +3</option>
-            </select>
-            <button id="btnSubmit" class="shrink-0 px-6 py-2 rounded-xl bg-gradient-to-b from-amber-400 to-amber-500 text-slate-950 hover:brightness-110 font-black text-sm shadow-lg shadow-amber-500/20">提交</button>
+          <div class="flex flex-col items-center gap-1">
+             <div class="flex items-center gap-2 mb-1">
+                <span class="text-xs text-emerald-100/80 font-bold">中墩 (3)</span>
+                <span id="midEval" class="text-[10px] text-emerald-100/50 mono">—</span>
+             </div>
+             <div id="slotMid" class="grid grid-cols-3 gap-2 shrink-0 items-center"></div>
           </div>
-          <div class="text-center mt-1 text-[10px] text-emerald-50/50">
-            狀態：<span id="submitStatus2">—</span>
+
+          <div class="flex flex-col items-center gap-1">
+             <div class="flex items-center gap-2 mb-1">
+                <span class="text-xs text-emerald-100/80 font-bold">尾墩 (3)</span>
+                <span id="tailEval" class="text-[10px] text-emerald-100/50 mono">—</span>
+             </div>
+             <div id="slotTail" class="grid grid-cols-3 gap-2 shrink-0 items-center"></div>
           </div>
-        </div>
 
-      </div>
+          <div class="mt-4 p-3 rounded-xl bg-white/5 border border-white/10 flex flex-col gap-3">
+             <div class="flex items-center gap-2">
+                <label class="text-xs text-emerald-100/70 whitespace-nowrap">特殊報到</label>
+                <select id="selReport" class="flex-1 bg-black/50 border border-white/20 rounded-lg px-2 py-2 text-xs text-slate-200 outline-none">
+                  <option value="none">無 (不報到)</option>
+                  <option value="allRed">全紅 +5</option>
+                  <option value="allBlack">全黑 +5</option>
+                  <option value="threeSnake">三蛇 +3</option>
+                  <option value="fourKind">4條 +10</option>
+                  <option value="fourPairs">4對 +10</option>
+                  <option value="mixedDragon">雜龍 +15</option>
+                  <option value="threeStraightFlush">3同花順 +25</option>
+                  <option value="twoFourKind">2個4條 +30</option>
+                  <option value="greenDragon">青龍 +100</option>
+                  <option value="noHand">百無 +3</option>
+                </select>
+             </div>
+             
+             <div class="flex items-center justify-between">
+                <div class="text-[10px] text-emerald-100/40">狀態: <span id="submitStatus2" class="text-emerald-100/80">—</span></div>
+                <button id="btnSubmit" class="px-8 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-600 text-black font-black text-sm shadow-lg hover:brightness-110 active:scale-95 transition-transform">
+                  提交牌型
+                </button>
+             </div>
+          </div>
 
-        <div class="hidden p-4 border-t border-white/10 items-center justify-between gap-2">
-          <div class="text-xs text-emerald-100/70">提示：手牌在底部，可直接互換放入。</div>
-          <button id="btnCloseArrange2" class="text-xs px-3 py-2 rounded-lg bg-gradient-to-b from-amber-400 to-amber-500 text-slate-950 font-semibold hover:brightness-105">好</button>
         </div>
       </div>
-    </div>
+      
+      </div>
   </div>
 
   <!-- Scoreboard Modal (DAY / MON) -->
