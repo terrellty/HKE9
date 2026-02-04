@@ -472,13 +472,13 @@
       </div>
 
       <!-- Hand Dock (fixed, above bottom bar) - only shown while Arrange Modal is open -->
-      <div id="handDock" class="hand-dock fixed left-0 right-0 bottom-0 z-[56] hidden pointer-events-none">
-        <div class="mx-auto max-w-5xl px-2 pb-2 pointer-events-auto">
-          <div class="rounded-2xl p-0"> 
-            <div id="hand" class="flex gap-0 overflow-x-auto overflow-y-hidden pl-1 pr-10 pb-4 flex-nowrap min-h-[110px] items-end"></div>
-          </div>
-        </div>
-      </div>
+      <div id="handDock" class="hand-dock fixed left-1/2 -translate-x-1/2 bottom-0 z-[56] hidden pointer-events-none w-1/2">
+  <div class="mx-auto w-full px-2 pb-2 pointer-events-auto"> <!-- 修改這裡的 max-w -->
+    <div class="rounded-2xl p-0"> 
+      <div id="hand" class="flex gap-0 overflow-x-auto overflow-y-hidden pl-1 pr-10 pb-4 flex-nowrap min-h-[110px] items-end"></div>
+    </div>
+  </div>
+</div>
 
       <!-- Bottom action bar (mobile friendly) -->
       <div id="bottomBar" class="fixed bottom-0 left-0 right-0 z-[45]">
