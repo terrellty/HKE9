@@ -5982,62 +5982,54 @@ function revealRound() {
     function renderHand() {
       const handEl = $('hand');
       
-      // 【修復】每次重新渲染手牌時，強制確保手牌區是可見的
-      // 這能防止如果拖曳中途發生重繪導致手牌區卡在隱藏狀態
+      // 1. 強制重置樣式，確保手牌區可見 (修復拖曳後消失的問題)
       handEl.classList.remove('translate-y-[150%]', 'opacity-0');
       
+      // 2. 清空內容
       handEl.innerHTML = '';
       
-      // 確保手牌區有過渡動畫效果
+      // 3. 確保手牌區有過渡動畫效果
       handEl.classList.add('transition-all', 'duration-300', 'ease-out');
 
-      const remaining = [];
-      clientState.cards9.forEach(c => {
-        if (!clientState.usedFromHand.has(c)) {
-          remaining.push(c);
-        }
+      // 4. 準備手牌資料 (過濾掉已排到桌上的牌)
+      // 注意：clientState.cards9 是物件陣列，不是字串
+      const dealerKey = clientState.dealerCard ? cardKey(clientState.dealerCard) : null;
+      
+      const remaining = (clientState.cards9 || []).filter(c => {
+        const key = cardKey(c);
+        // 過濾掉：已放入排牌區的牌 或 已選為莊家的牌
+        return !clientState.usedFromHand.has(key) && key !== dealerKey;
       });
 
-      const suitOrder = { 's':4, 'h':3, 'd':2, 'c':1 };
-      const rankOrder = { 
-        'A':14, 'K':13, 'Q':12, 'J':11, '10':10, '9':9, '8':8, '7':7, '6':6, '5':5, '4':4, '3':3, '2':2 
-      };
-
+      // 5. 排序邏輯 (依點數大小)
+      const suitOrder = {S:4, H:3, D:2, C:1, J:5}; // 花色權重
       remaining.sort((a,b) => {
-        const ra = rankOrder[a.slice(0,-1)] || 0;
-        const rb = rankOrder[b.slice(0,-1)] || 0;
-        if (ra !== rb) return ra - rb;
-        const sa = suitOrder[a.slice(-1)] || 0;
-        const sb = suitOrder[b.slice(-1)] || 0;
-        return sa - sb;
+        // 大鬼(16) > 細鬼(15) > A(14) > K(13)...
+        // 如果是鬼牌，rank 分別是 16, 15，數字牌則依 r
+        const ra = a.r; 
+        const rb = b.r;
+        if (ra !== rb) return ra - rb; // 點數小的在左，大的在右 (或反過來 rb - ra)
+        return (suitOrder[a.s]||0) - (suitOrder[b.s]||0);
       });
 
-      remaining.forEach(cardStr => {
-        const div = document.createElement('div');
-        // 移除原本的 draggable=true，因為我們使用自定義的 handleDragStart 系統
-        div.className = 'relative group cursor-grab active:cursor-grabbing touch-none';
+      // 6. 產生卡片 DOM
+      remaining.forEach(c => {
+        // 判斷是否被選取 (Pick)
+        const key = cardKey(c);
+        const isSelected = (clientState.pick && clientState.pick.zone === 'hand' && clientState.pick.key === key);
 
-        // 點擊選擇功能
-        div.onclick = () => {
-          if (clientState.pick === cardStr) {
-             clientState.pick = null;
-          } else {
-             clientState.pick = cardStr;
-          }
-          renderHand();
+        // 使用專用的 renderCard 函式來產生卡片 (它包含了正確的樣式與拖曳事件)
+        const btn = renderCard(c, { variant: 'hand', selected: isSelected });
+
+        // 綁定點擊事件 (處理選取/互換)
+        btn.onclick = (e) => {
+          // 阻止事件冒泡，避免觸發其他層的點擊
+          e.stopPropagation();
+          onPick({zone: 'hand', key: key});
         };
 
-        const img = getCardImg(cardStr);
-        img.className = 'w-[50px] sm:w-[58px] h-auto shadow-md rounded-lg bg-slate-200 pointer-events-none';
-        
-        if (clientState.pick === cardStr) {
-          img.classList.add('ring-2','ring-amber-400','-translate-y-2');
-        } else {
-           img.classList.add('hover:-translate-y-1', 'transition-transform');
-        }
-
-        div.appendChild(img);
-        handEl.appendChild(div);
+        // 將卡片加入手牌區
+        handEl.appendChild(btn);
       });
     }
 
