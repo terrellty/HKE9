@@ -73,9 +73,28 @@
     .poker-card.pc-hand .pcorner .psuit { font-size: 11px; }
     .poker-card.pc-hand .pcenter { font-size: 40px; }
 
-    .poker-card.pc-slot .pcorner .prank { font-size: 11px; }
-    .poker-card.pc-slot .pcorner .psuit { font-size: 11px; }
-    .poker-card.pc-slot .pcenter { font-size: 38px; }
+     /* --- 新的 pc-slot 設定 (加大) --- */
+    .poker-card.pc-slot {
+      /* 透過 CSS 定義基礎大小，JS 中也會有對應 class，這裡做雙重確保 */
+      width: 64px; 
+      height: 90px;
+    }
+    @media (min-width: 640px) {
+      .poker-card.pc-slot {
+        width: 80px; 
+        height: 112px;
+      }
+    }
+
+    .poker-card.pc-slot .pcorner .prank { font-size: 14px; }
+    /* 隱藏右下角 */
+    .poker-card.pc-slot .pcorner.br { display: none !important; }
+    
+    /* 極大化中間花色 */
+    .poker-card.pc-slot .pcenter { 
+      font-size: 50px; 
+      line-height: 1;
+    }
 
     /* Mini cards (table reveal) */
     .poker-card.pc-mini { border-radius: 6px; }
@@ -701,73 +720,78 @@
     <div class="absolute inset-0 backdrop" id="arrangeBackdrop"></div>
     <!-- Compact layout for landscape: reserve space for the Hand Dock -->
     <div class="absolute inset-0 flex items-start justify-center p-0 pb-10">
-      <div class="w-full sm:max-w-5xl rounded-2xl panel border border-amber-200/20 modal-in flex flex-col max-h-full overflow-hidden">
-        <div class="p-1 border-b border-white/10 flex items-center justify-end gap-1.5">
+      <div class="w-full h-full sm:max-w-5xl panel border-0 sm:border sm:rounded-2xl border-amber-200/20 modal-in flex flex-col overflow-hidden bg-black/80">
+        
+        <div class="p-2 border-b border-white/10 flex items-center justify-end gap-1.5 shrink-0 bg-black/40">
           <div class="sr-only">排牌 / 提交</div>
-          <div id="arrangeTimerText" class="mr-auto text-[10px] text-emerald-100/70 mono">—</div>
-          <button id="btnAutoFill" class="text-[10px] px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">快速排</button>
-          <button id="btnResetArrange" class="text-[10px] px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">重排</button>
-          <button id="btnCloseArrange" class="text-[10px] px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">關閉</button>
+          <div id="arrangeTimerText" class="mr-auto text-[12px] text-emerald-100/70 mono font-bold">—</div>
+          <button id="btnAutoFill" class="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">快速排</button>
+          <button id="btnResetArrange" class="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">重排</button>
+          <button id="btnCloseArrange" class="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">關閉</button>
         </div>
 
-        <div class="p-1 flex-1 overflow-auto">
-          <div class="rounded-xl bg-black/15 border border-white/10 p-1">
-            <div class="grid gap-1 justify-items-center">
-              <!-- Head + Dealer (dealer on the right) -->
-              <div class="flex items-start justify-center gap-[2px]">
-                <div class="min-w-[52px]">
-                  <div class="text-[11px] text-emerald-100/80 leading-none">頭（2）</div>
-                  <div id="headEval" class="text-[10px] text-emerald-100/70 leading-none">—</div>
-                </div>
-                <div id="slotHead" class="grid grid-cols-2 gap-0 shrink-0 items-center"></div>
+        <div class="flex-1 overflow-y-auto overflow-x-hidden relative flex flex-col">
+          
+          <div class="w-full max-w-lg mx-auto p-2 flex flex-col gap-4 sm:gap-6 mt-4 pb-40">
+            
+            <div class="flex items-end justify-center gap-4">
+               <div class="flex flex-col items-center gap-1">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="text-[12px] text-emerald-100/80 font-bold">頭墩 (2)</span>
+                    <span id="headEval" class="text-[11px] text-emerald-100/60 mono">—</span>
+                  </div>
+                  <div id="slotHead" class="grid grid-cols-2 gap-1 shrink-0 items-center"></div>
+               </div>
 
-                <div class="w-[50px] sm:w-[56px] shrink-0">
-                  <div id="dealerCardSlot" class="h-[62px] w-[44px] sm:h-[70px] sm:w-[50px] rounded-md border border-amber-200/20 bg-black/20 p-[1px]"></div>
-                </div>
-              </div>
-
-              <!-- Mid -->
-              <div class="flex items-start justify-center gap-[2px]">
-                <div class="min-w-[52px]">
-                  <div class="text-[11px] text-emerald-100/80 leading-none">中（3）</div>
-                  <div id="midEval" class="text-[10px] text-emerald-100/70 leading-none">—</div>
-                </div>
-                <div id="slotMid" class="grid grid-cols-3 gap-0 shrink-0 items-center"></div>
-              </div>
-
-              <!-- Tail -->
-              <div class="flex items-start justify-center gap-[2px]">
-                <div class="min-w-[52px]">
-                  <div class="text-[11px] text-emerald-100/80 leading-none">尾（3）</div>
-                  <div id="tailEval" class="text-[10px] text-emerald-100/70 leading-none">—</div>
-                </div>
-                <div id="slotTail" class="grid grid-cols-3 gap-0 shrink-0 items-center"></div>
-              </div>
+               <div class="flex flex-col items-center gap-1 ml-2">
+                  <span class="text-[12px] text-amber-100/80 font-bold mb-1">選莊</span>
+                  <div id="dealerCardSlot" class="shrink-0"></div>
+               </div>
             </div>
+
+            <div class="flex flex-col items-center gap-1">
+               <div class="flex items-center gap-2 mb-1">
+                  <span class="text-[12px] text-emerald-100/80 font-bold">中墩 (3)</span>
+                  <span id="midEval" class="text-[11px] text-emerald-100/60 mono">—</span>
+               </div>
+               <div id="slotMid" class="grid grid-cols-3 gap-1 shrink-0 items-center"></div>
+            </div>
+
+            <div class="flex flex-col items-center gap-1">
+               <div class="flex items-center gap-2 mb-1">
+                  <span class="text-[12px] text-emerald-100/80 font-bold">尾墩 (3)</span>
+                  <span id="tailEval" class="text-[11px] text-emerald-100/60 mono">—</span>
+               </div>
+               <div id="slotTail" class="grid grid-cols-3 gap-1 shrink-0 items-center"></div>
+            </div>
+
           </div>
         </div>
 
-        <!-- Fixed footer: ultra-compact report + submit (single line) -->
-        <div class="p-1.5 border-t border-white/10">
-          <div class="flex items-center gap-1.5">
-            <div class="text-[10px] text-emerald-100/80 shrink-0">報到</div>
-            <select id="selReport" class="flex-1 bg-black/35 border border-white/10 rounded-xl px-2 py-1 text-[10px] outline-none focus:border-amber-200/50">
+        <div class="p-2 border-t border-white/10 bg-black/60 shrink-0 z-[60] mb-[120px]"> 
+          <div class="flex items-center gap-2 justify-center max-w-lg mx-auto">
+            <div class="text-[11px] text-emerald-100/80 shrink-0">報到</div>
+            <select id="selReport" class="flex-1 bg-black/50 border border-white/20 rounded-xl px-3 py-2 text-xs outline-none focus:border-amber-200/50 text-white">
               <option value="none">不報</option>
-              <option value="allRed">全紅 +5（全紅色牌）</option>
-              <option value="allBlack">全黑 +5（全黑色牌）</option>
-              <option value="threeSnake">三蛇 +3（三順子）</option>
-              <option value="fourKind">4條 +10（鐵支）</option>
-              <option value="fourPairs">4對 +10（四對子）</option>
-              <option value="mixedDragon">雜龍 +15（牌順序由小至大）</option>
-              <option value="threeStraightFlush">3同花順 +25（三同花順）</option>
-              <option value="twoFourKind">2個4條 +30（2對鐵支）</option>
-              <option value="greenDragon">青龍 +100（一樣顏色牌順序由小至大）</option>
-              <option value="noHand">百無 +3（3高牌）</option>
+              <option value="allRed">全紅 +5</option>
+              <option value="allBlack">全黑 +5</option>
+              <option value="threeSnake">三蛇 +3</option>
+              <option value="fourKind">4條 +10</option>
+              <option value="fourPairs">4對 +10</option>
+              <option value="mixedDragon">雜龍 +15</option>
+              <option value="threeStraightFlush">3同花順 +25</option>
+              <option value="twoFourKind">2個4條 +30</option>
+              <option value="greenDragon">青龍 +100</option>
+              <option value="noHand">百無 +3</option>
             </select>
-            <button id="btnSubmit" class="shrink-0 px-3 py-1.5 rounded-xl bg-gradient-to-b from-amber-400 to-amber-500 text-slate-950 hover:brightness-105 font-black text-[11px]">提交</button>
-            <div class="text-[10px] text-emerald-50/80 shrink-0">限時：<span id="arrangeTimerText2" class="mono">—</span>｜狀態：<span id="submitStatus2">—</span></div>
+            <button id="btnSubmit" class="shrink-0 px-6 py-2 rounded-xl bg-gradient-to-b from-amber-400 to-amber-500 text-slate-950 hover:brightness-110 font-black text-sm shadow-lg shadow-amber-500/20">提交</button>
+          </div>
+          <div class="text-center mt-1 text-[10px] text-emerald-50/50">
+            狀態：<span id="submitStatus2">—</span>
           </div>
         </div>
+
+      </div>
 
         <div class="hidden p-4 border-t border-white/10 items-center justify-between gap-2">
           <div class="text-xs text-emerald-100/70">提示：手牌在底部，可直接互換放入。</div>
@@ -5790,7 +5814,7 @@ function revealRound() {
 
       const variant = opts.variant || (opts.small ? 'slot' : 'hand');
       const sizeCls = variant === 'slot'
-        ? 'pc-slot w-[44px] h-[62px] sm:w-[50px] sm:h-[70px]'
+        ? 'pc-slot w-full h-full'
         : (variant === 'mini'
           ? 'pc-mini w-[25px] h-[35px] sm:w-[30px] sm:h-[42px]'
           : (variant === 'hand'
@@ -5923,7 +5947,7 @@ function revealRound() {
       // -----------
 
       if (!clientState.dealerCard) {
-        const box = el('div', 'h-[62px] w-[44px] sm:h-[70px] sm:w-[50px] rounded-lg border border-dashed border-amber-200/30 bg-black/10 flex items-center justify-center text-[10px] font-black text-amber-100/90 text-center leading-snug', '選莊');
+        const box = el('div', 'h-[90px] w-[64px] sm:h-[112px] sm:w-[80px] rounded-lg border-2 border-dashed border-amber-200/30 bg-amber-400/5 flex items-center justify-center text-xs font-bold text-amber-100/50', '莊');
         box.addEventListener('click', (e) => {
           if (e.target.closest('button')) return;
           if (clientState.submitted) return;
@@ -6143,7 +6167,7 @@ function revealRound() {
 
     function renderSlotCell(slotName, idx) {
       // Poker-card slot (match card aspect ratio) - ultra compact
-      const cell = el('div', 'h-[62px] w-[44px] sm:h-[70px] sm:w-[50px] rounded-md border border-white/10 bg-black/20 p-[1px] flex items-center justify-center');
+      const cell = el('div', 'h-[90px] w-[64px] sm:h-[112px] sm:w-[80px] rounded-lg border-2 border-white/10 bg-white/5 flex items-center justify-center transition-colors');
       
       // --- 新增開始 ---
       // 標記這是一個可放置的區域
@@ -6157,6 +6181,7 @@ function revealRound() {
 
       if (!c) {
         cell.appendChild(el('div', 'text-[10px] text-emerald-100/55 text-center leading-snug', '放牌'));
+        cell.appendChild(el('div', 'text-xs sm:text-sm text-emerald-100/30 font-bold pointer-events-none', '＋'));
       } else {
         const selected = clientState.pick?.zone==='slot' && clientState.pick.slot===slotName && clientState.pick.idx===idx;
         const btn = renderCard(c, {variant:'slot', selected});
