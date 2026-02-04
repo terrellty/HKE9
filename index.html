@@ -6005,18 +6005,18 @@ function revealRound() {
     function updateSelectedHint() {
       const p = clientState.pick;
       if (!p) {
-        $('selectedHint').textContent = '未選取牌';
+        //$('selectedHint').textContent = '未選取牌';
         return;
       }
       let label = '';
-      if (p.zone === 'hand') label = `手牌：${labelForKey(p.key)}`;
+      //if (p.zone === 'hand') label = `手牌：${labelForKey(p.key)}`;
       if (p.zone === 'dealer') label = `選莊牌：${cardLabel(clientState.dealerCard)}`;
       if (p.zone === 'slot') {
         const cname = p.slot==='head' ? '頭墩' : (p.slot==='mid' ? '中墩' : '尾墩');
         const c = clientState.arranged[p.slot][p.idx];
         label = `${cname}#${p.idx+1}：${c ? cardLabel(c) : '—'}`;
       }
-      $('selectedHint').textContent = `已選取（可再點另一張牌互換；點空格可移動）：${label}`;
+     // $('selectedHint').textContent = `已選取（可再點另一張牌互換；點空格可移動）：${label}`;
     }
 
     function clearPick() {
