@@ -715,23 +715,20 @@
 <div id="arrangeModal" class="hidden fixed inset-0 z-[53]">
     <div class="absolute inset-0 backdrop" id="arrangeBackdrop"></div>
     
-    <div class="absolute inset-0 z-10 flex flex-col bg-slate-950/90 h-full w-full pointer-events-auto">
+    <div class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
       
-      <div class="absolute top-3 left-4 z-30 pointer-events-none">
-         <div class="flex flex-col items-start">
-            <div class="text-[10px] text-emerald-100/60 shadow-black drop-shadow-md">排牌階段</div>
-            <div id="arrangeTimerText" class="text-lg font-bold text-emerald-100 mono shadow-black drop-shadow-md">--</div>
+      <div class="pointer-events-auto relative flex flex-row items-center justify-center gap-4 sm:gap-8 p-4 w-full max-w-5xl h-full max-h-[90vh]">
+         
+         <div class="absolute top-0 left-4 z-30 flex flex-col items-start shadow-black drop-shadow-md">
+            <div class="text-[10px] text-emerald-100/60">排牌階段</div>
+            <div id="arrangeTimerText" class="text-xl font-bold text-emerald-100 mono">--</div>
          </div>
-      </div>
 
-      <button id="btnCloseArrange" class="absolute top-3 right-3 z-30 w-9 h-9 rounded-full bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-100 flex items-center justify-center active:scale-95 transition backdrop-blur-md">
-        ✕
-      </button>
+         <button id="btnCloseArrange" class="absolute top-0 right-2 z-30 w-10 h-10 rounded-full bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-100 flex items-center justify-center active:scale-95 transition backdrop-blur-md shadow-lg">
+            ✕
+         </button>
 
-      <div class="flex-1 w-full h-full overflow-y-auto overflow-x-hidden relative">
-        <div class="flex flex-col items-center justify-center gap-4 min-h-full pb-20 p-2 pt-14">
-          
-          <div class="flex flex-col gap-2 select-none scale-105 sm:scale-100 origin-top">
+         <div class="flex flex-col gap-3 select-none">
              
              <div class="flex items-center gap-2 justify-end">
                 <div class="flex flex-col items-center justify-center text-[10px] font-bold text-emerald-100/50 leading-none gap-0.5">
@@ -754,50 +751,44 @@
                 </div>
                 <div id="slotTail" class="grid grid-cols-3 gap-1"></div>
              </div>
-          </div>
+         </div>
 
-          <div class="flex flex-col w-full max-w-[320px] gap-3 p-3 rounded-2xl bg-white/5 border border-white/5 relative z-10">
+         <div class="flex flex-col w-32 shrink-0 gap-3">
              
-             <div class="flex items-end justify-between gap-2">
-                 <div class="flex flex-col items-center gap-1">
-                    <div class="text-[10px] text-amber-100/60 font-bold">選莊</div>
-                    <div id="dealerCardSlot" class="shrink-0 shadow-[0_0_20px_rgba(251,191,36,0.15)]"></div>
-                 </div>
-
-                 <div class="flex gap-2 mb-1">
-                    <button id="btnAutoFill" class="h-9 px-4 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200 text-xs font-bold active:scale-95 transition">快速</button>
-                    <button id="btnResetArrange" class="h-9 px-4 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200 text-xs font-bold active:scale-95 transition">重排</button>
-                 </div>
+             <div class="flex flex-col items-center gap-1 p-2 rounded-xl bg-white/5 border border-white/5">
+                <div class="text-[10px] text-amber-100/60 font-bold">選莊</div>
+                <div id="dealerCardSlot" class="shrink-0 shadow-[0_0_20px_rgba(251,191,36,0.15)]"></div>
              </div>
 
-             <div class="flex flex-col gap-2">
-                <div class="flex flex-col gap-1">
-                   <div class="flex justify-between items-end">
-                      <label class="text-[10px] text-emerald-100/40">報到</label>
-                      <span id="submitStatus2" class="text-[10px] text-emerald-100/80 scale-90 origin-right">—</span>
-                   </div>
-                   <select id="selReport" class="bg-slate-950 border border-white/20 rounded-xl px-2 py-2 text-xs text-slate-100 outline-none w-full appearance-none text-center font-bold shadow-sm">
-                      <option value="none">無 (不報到)</option>
-                      <option value="allRed">全紅 +5</option>
-                      <option value="allBlack">全黑 +5</option>
-                      <option value="threeSnake">三蛇 +3</option>
-                      <option value="fourKind">4條 +10</option>
-                      <option value="fourPairs">4對 +10</option>
-                      <option value="mixedDragon">雜龍 +15</option>
-                      <option value="threeStraightFlush">3同花順 +25</option>
-                      <option value="twoFourKind">2個4條 +30</option>
-                      <option value="greenDragon">青龍 +100</option>
-                      <option value="noHand">百無 +3</option>
-                    </select>
+             <div class="grid grid-cols-2 gap-2">
+                <button id="btnAutoFill" class="col-span-1 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200 text-xs font-bold active:scale-95 transition">快速</button>
+                <button id="btnResetArrange" class="col-span-1 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-slate-200 text-xs font-bold active:scale-95 transition">重排</button>
+             </div>
+
+             <div class="p-2 rounded-xl bg-white/5 border border-white/5 flex flex-col gap-2">
+                <div class="flex justify-between items-end">
+                    <label class="text-[10px] text-emerald-100/40">報到</label>
+                    <span id="submitStatus2" class="text-[10px] text-emerald-100/80 scale-90 origin-right">—</span>
                 </div>
-                
-                <button id="btnSubmit" class="w-full py-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-600 text-black font-black text-sm shadow-lg hover:brightness-110 active:scale-95 transition-transform">
+                <select id="selReport" class="bg-slate-950 border border-white/20 rounded-lg px-1 py-1.5 text-xs text-slate-100 outline-none w-full text-center font-bold">
+                    <option value="none">無 (不報到)</option>
+                    <option value="allRed">全紅 +5</option>
+                    <option value="allBlack">全黑 +5</option>
+                    <option value="threeSnake">三蛇 +3</option>
+                    <option value="fourKind">4條 +10</option>
+                    <option value="fourPairs">4對 +10</option>
+                    <option value="mixedDragon">雜龍 +15</option>
+                    <option value="threeStraightFlush">3同花順 +25</option>
+                    <option value="twoFourKind">2個4條 +30</option>
+                    <option value="greenDragon">青龍 +100</option>
+                    <option value="noHand">百無 +3</option>
+                </select>
+                <button id="btnSubmit" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-600 text-black font-black text-sm shadow-lg hover:brightness-110 active:scale-95 transition-transform">
                   提交
                 </button>
              </div>
-          </div>
+         </div>
 
-        </div>
       </div>
     </div>
 </div>
@@ -3444,42 +3435,29 @@ function eval3NoJoker(cards) {
     }
 
     function resetAll() {
-      // stop keepalive/reconnect timers
-      try {
-        persistState.enabled = false;
-        persistState.roomId = '';
-        persistState.fileId = null;
-        persistState.scoresByName = {};
-      } catch {}
+      // 1. 安全地停止計時器與清除狀態
+      try { persistState.enabled = false; persistState.roomId = ''; persistState.scoresByName = {}; } catch {}
       try { stopHostHeartbeat(); } catch {}
       try { stopClientHeartbeat(); } catch {}
-      try {
-        if (clientReconnectTimer) {
-          clearTimeout(clientReconnectTimer);
-          clientReconnectTimer = null;
-        }
-      } catch {}
+      try { if (clientReconnectTimer) { clearTimeout(clientReconnectTimer); clientReconnectTimer = null; } } catch {}
       clientReconnectAttempts = 0;
       try { stopArrangeTimer(); } catch {}
 
-      // Safe destroy peer
+      // 2. 銷毀 Peer 連線 (這是最容易出錯導致卡住的地方，必須包 try-catch)
       if (peer) {
-        try { 
-            peer.destroy(); 
-        } catch (e) {
-            console.warn('Peer destroy error:', e);
-        }
+        try { peer.destroy(); } catch (e) { console.warn('Peer destroy error:', e); }
       }
       peer = null;
       isHost = false;
       hostId = null;
       myId = null;
-      
+
       if (clientConn) {
         try { clientConn.close(); } catch {}
       }
       clientConn = null;
-      
+
+      // 3. 重置遊戲狀態
       clientState.roomId = null;
       clientState.connected = false;
       clientState.players = {};
@@ -3508,21 +3486,27 @@ function eval3NoJoker(cards) {
       hostState.revealed = false;
       hostState.cumulative = {};
 
-      $('myPeerId').textContent = '—';
-      $('btnCopyRoom').classList.add('hidden');
-      $('btnCopyLink').classList.add('hidden');
-      $('btnLeave').classList.add('hidden');
-      $('btnOpenLastReveal').classList.add('hidden');
-      $('scoreBody').innerHTML = '';
-      $('myCumulative').textContent = '0';
+      // 4. 重置 UI
+      try { $('myPeerId').textContent = '—'; } catch {}
+      try { $('btnCopyRoom').classList.add('hidden'); } catch {}
+      try { $('btnCopyLink').classList.add('hidden'); } catch {}
+      try { $('btnLeave').classList.add('hidden'); } catch {}
+      try { $('btnOpenLastReveal').classList.add('hidden'); } catch {}
+      try { $('scoreBody').innerHTML = ''; } catch {}
+      try { $('myCumulative').textContent = '0'; } catch {}
 
-      // Ensure Name persists in Input
+      // 5. 【關鍵修正】恢復名稱：確保退出房間後名稱不會變空白
       try {
-          const savedName = localStorage.getItem('ninePokerName') || clientState.myName || '';
-          const inp = $('inpName');
-          if (inp) inp.value = savedName;
+        const saved = localStorage.getItem('ninePokerName');
+        // 如果有儲存的名稱，就恢復它；否則保持原樣 (避免被清成空字串)
+        if (saved) {
+           clientState.myName = saved;
+           const inp = $('inpName');
+           if (inp) inp.value = saved;
+        }
       } catch {}
 
+      // 6. 導航與徽章重置
       setBadge(false, '離線');
       setRoleBadges();
       renderPlayers();
@@ -3535,8 +3519,8 @@ function eval3NoJoker(cards) {
       updateBodyOverflow();
       updateChatUnread();
       
-      // Force return to lobby
-      showPage('lobby');
+      // 7. 【關鍵修正】強制返回大廳 (放在最後確保一定執行)
+      try { showPage('lobby'); } catch (e) { console.error('ShowPage error:', e); }
       
       log('已重置');
     }
