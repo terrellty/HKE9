@@ -5482,7 +5482,8 @@ function revealRound() {
         const delta = 90 - selfDeg;
         startDeg += delta;
       }
-
+      const readyMap = isHost ? readyMapForBroadcast() : (clientState.readyMap || {});
+      
       // positions around a circle
       for (let i=0;i<N;i++) {
         const p = players[i];
@@ -5511,7 +5512,7 @@ function revealRound() {
           } catch {}
 
           // Ready tick (submitted)
-          const ready = !!(clientState.readyMap && clientState.readyMap[p.id]);
+          const ready = !!readyMap[p.id] || (!isHost && p.id === myId && clientState.submitted);
           if (ready) {
             // Put tick on top of the icon and avoid being clipped by overflow
             try { iconNode.style.overflow = 'visible'; } catch {}
