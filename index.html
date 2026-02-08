@@ -350,7 +350,7 @@
                   <button id="btnUpdateApp" type="button" class="text-[11px] px-2.5 py-1.5 rounded-full bg-amber-400/15 border border-amber-200/25 text-amber-100 font-black hover:brightness-110">更新</button>
                   <button id="btnOpenScoreboard" type="button" class="text-[11px] px-2.5 py-1.5 rounded-full bg-white/10 hover:bg-white/15 border border-white/10 text-emerald-50">計分版</button>
                 </div>
-                <div class="text-[11px] text-emerald-100/70">V1.2.3</div>
+                <div class="text-[11px] text-emerald-100/70">1.2.4</div>
               </div>
 
               <div class="mt-2 grid gap-2">
@@ -4599,16 +4599,35 @@ function eval3NoJoker(cards) {
         }
       }
     }
+    function isPlayerConnected(pid) {
+      const p = hostState.players?.[pid];
+      return !!(p?.conn && p.conn.open);
+    }
+
+    function roundPlayerIds() {
+      const ids = [hostId];
+      for (const pid in hostState.players) {
+        if (isPlayerConnected(pid) || hostState.submissions?.[pid]) ids.push(pid);
+      }
+      return ids;
+    }
+
+    function activePlayerIdsForDeal() {
+      const ids = [hostId];
+      for (const pid in hostState.players) {
+        if (isPlayerConnected(pid)) ids.push(pid);
+      }
+      return ids;
+    }
 
     function readyMapForBroadcast() {
       const out = {};
-      out[hostId] = !!hostState.submissions[hostId];
-      for (const pid in hostState.players) out[pid] = !!hostState.submissions[pid];
+      for (const id of roundPlayerIds()) out[id] = !!hostState.submissions[id];
       return out;
     }
 
     function allSubmitted() {
-      const ids = [hostId, ...Object.keys(hostState.players)];
+      const ids = roundPlayerIds();
       return ids.every(id => !!hostState.submissions[id]);
     }
 
@@ -4722,7 +4741,7 @@ function eval3NoJoker(cards) {
       clientState.lastReveal = null;
       glog(`第 ${hostState.round} 局：發牌中…`);
 
-      const ids = [hostId, ...Object.keys(hostState.players)];
+      const ids = activePlayerIdsForDeal();
       const deck = shuffle(makeDeck54());
       const need = ids.length * 9;
       if (deck.length < need) {
@@ -4738,8 +4757,10 @@ function eval3NoJoker(cards) {
       }
 
       const ready = readyMapForBroadcast();
-      for (const pid in hostState.players) {
+      for (const pid of ids) {
+        if (pid === hostId) continue;
         const p = hostState.players[pid];
+        if (!p?.conn) continue;
         send(p.conn, {
           t:'deal',
           round: hostState.round,
@@ -4782,7 +4803,7 @@ function eval3NoJoker(cards) {
 
     function computeDealerIdFromSubmissions() {
       // Default: compare dealerCard as usual (ghost / selection override is handled by hostState.dealerOverride)
-      const ids = [hostId, ...Object.keys(hostState.players)];
+      const ids = roundPlayerIds();
       let bestId = null;
       for (const id of ids) {
         const sub = hostState.submissions[id];
@@ -4807,7 +4828,7 @@ function revealRound() {
       try { updateBodyOverflow();
       } catch {}
 
-      const ids = [hostId, ...Object.keys(hostState.players)];
+      const ids = roundPlayerIds();
       const missing = ids.filter(id => !hostState.submissions[id]);
       if (missing.length) {
         toast('尚有玩家未提交，無法結算');
