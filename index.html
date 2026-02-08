@@ -828,7 +828,6 @@
 
         <div class="p-4 grid gap-3 max-h-[70vh] overflow-auto">
           <div class="flex items-center gap-2">
-            <button id="btnTabDay" type="button" class="text-xs px-3 py-2 rounded-xl border border-white/10 bg-amber-400/15 text-amber-100 font-black">DAY</button>
             <button id="btnTabNig" type="button" class="text-xs px-3 py-2 rounded-xl border border-white/10 bg-white/10 hover:bg-white/15 text-emerald-50 font-black">MON</button>
             <div id="scoreboardStatus" class="ml-auto text-[11px] text-emerald-100/70">—</div>
           </div>
@@ -1883,8 +1882,8 @@
 
     // -------------------- Scoreboard (DAY/MON) --------------------
     const scoreboardState = {
-      tab: 'DAY',
-      cache: { DAY: null, MON: null },
+      tab: 'MON',
+      cache: { MON: null },
       loading: false,
     };
 
