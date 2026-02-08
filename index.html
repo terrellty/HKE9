@@ -4239,7 +4239,7 @@ function eval3NoJoker(cards) {
         delete hostState.players[targetId];
         delete hostState.dealt[targetId];
         delete hostState.submissions[targetId];
-        delete hostState.cumulative[targetId]; // 選擇性：是否連分數一起刪除，通常踢人就全刪
+        //delete hostState.cumulative[targetId]; // 選擇性：是否連分數一起刪除，通常踢人就全刪
         
         // 3. 從座位表移除
         if (hostState.seatOrder) {
