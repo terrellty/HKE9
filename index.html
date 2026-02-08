@@ -3048,7 +3048,7 @@ function eval3NoJoker(cards) {
     let myId = null;
     let serverSocket = null;
     const serverConns = new Map(); // peerId -> virtual conn (server relay mode)
-    const DEFAULT_SERVER_URL = 'https:hke9.onrender.com';
+    const DEFAULT_SERVER_URL = 'wss://hke9.onrender.com';
 
     function serverModeUrl() {
       try {
