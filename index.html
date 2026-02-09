@@ -4167,11 +4167,23 @@ function eval3NoJoker(cards) {
         if (!existed) {
           const norm = (s) => String(s||'').trim();
           const targetName = norm(name);
+          const now = Date.now();
           const candidates = Object.values(hostState.players || {})
-            .filter(p => p && norm(p.name) === targetName && (!p.conn || !p.conn.open))
+            .filter(p => {
+              if (!p || norm(p.name) !== targetName) return false;
+              if (!p.conn || !p.conn.open) return true;
+              const lastSeen = p.lastSeen || p.joinedAt || 0;
+              return (now - lastSeen) > HEARTBEAT_TIMEOUT_MS;
+            })
             .sort((a,b) => Number(a.disconnectedAt||0) - Number(b.disconnectedAt||0));
           if (candidates.length) {
-            migratedFromId = candidates[0].id;
+            const previous = candidates[0];
+            migratedFromId = previous.id;
+            try {
+              if (previous.conn && previous.conn.open) {
+                previous.conn.close();
+              }
+            } catch {}
             // Move state: cumulative/dealt/submissions + seatOrder
             try {
               if (hostState.cumulative[migratedFromId] !== undefined) {
