@@ -4308,8 +4308,16 @@ function eval3NoJoker(cards) {
                 hostState.submissions[pid] = hostState.submissions[migratedFromId];
                 delete hostState.submissions[migratedFromId];
               }
+              if (hostState.nextReadyMap?.[migratedFromId] !== undefined) {
+                hostState.nextReadyMap[pid] = hostState.nextReadyMap[migratedFromId];
+                delete hostState.nextReadyMap[migratedFromId];
+              }
               if (hostState.seatOrder && hostState.seatOrder.length) {
                 hostState.seatOrder = hostState.seatOrder.map(x => x === migratedFromId ? pid : x);
+              }
+              if (nextReadyKickTimers[migratedFromId]) {
+                nextReadyKickTimers[pid] = nextReadyKickTimers[migratedFromId];
+                delete nextReadyKickTimers[migratedFromId];
               }
               delete hostState.players[migratedFromId];
             } catch {}
@@ -5031,6 +5039,10 @@ function eval3NoJoker(cards) {
         hostState.submissions[nextId] = hostState.submissions[prevId];
         delete hostState.submissions[prevId];
       }
+      if (hostState.nextReadyMap?.[prevId] !== undefined) {
+        hostState.nextReadyMap[nextId] = hostState.nextReadyMap[prevId];
+        delete hostState.nextReadyMap[prevId];
+      }
       if (hostState.cumulative?.[prevId] !== undefined) {
         hostState.cumulative[nextId] = hostState.cumulative[prevId];
         delete hostState.cumulative[prevId];
@@ -5047,6 +5059,10 @@ function eval3NoJoker(cards) {
       if (clientState.readyMap?.[prevId] !== undefined) {
         clientState.readyMap[nextId] = clientState.readyMap[prevId];
         delete clientState.readyMap[prevId];
+      }
+      if (nextReadyKickTimers[prevId]) {
+        nextReadyKickTimers[nextId] = nextReadyKickTimers[prevId];
+        delete nextReadyKickTimers[prevId];
       }
     }
 
