@@ -3487,6 +3487,8 @@ function eval3NoJoker(cards) {
 
     // Max players (including host)
     const MAX_PLAYERS_TOTAL = 6;
+    const NEXT_READY_TIMEOUT_MS = 30000;
+    let nextReadyKickTimers = {};
 
     // Host state
     const hostState = {
@@ -3498,6 +3500,7 @@ function eval3NoJoker(cards) {
       dealt: {}, // peerId -> {all9}
       submissions: {}, // peerId -> {dealerCard, head, mid, tail, report}
       revealed: false,
+      nextReadyMap: {}, // peerId -> boolean (ready for next round after reveal)
       cumulative: {}, // peerId -> total
       dealerPick: null, // {controllerId, kind:'BJ'|'SJ', startedAt}
       dealerOverride: null, // dealerId chosen during dealer pick phase
@@ -3529,6 +3532,7 @@ function eval3NoJoker(cards) {
       chatUnread: false,
       bottomBarCollapsed: true,
       readyMap: {}, // {peerId: boolean} latest ready status from host
+      nextReadyMap: {}, // {peerId: boolean} ready for next round after reveal
       waitingForHost: false,
     };
 
@@ -3778,6 +3782,10 @@ function eval3NoJoker(cards) {
       } catch {}
       hostReconnectAttempts = 0;
       try { stopArrangeTimer(); } catch {}
+      try {
+        Object.values(nextReadyKickTimers).forEach((timer) => clearTimeout(timer));
+        nextReadyKickTimers = {};
+      } catch {}
 
       closeRelaySocket();
       relayIntent = null;
@@ -3807,6 +3815,7 @@ function eval3NoJoker(cards) {
       clientState.lastReveal = null;
       clientState.cumulative = {};
       clientState.bottomBarCollapsed = true;
+      clientState.nextReadyMap = {};
 
       hostState.settings = { roundsTotal: 5 };
       hostState.players = {};
@@ -3816,6 +3825,7 @@ function eval3NoJoker(cards) {
       hostState.dealt = {};
       hostState.submissions = {};
       hostState.revealed = false;
+      hostState.nextReadyMap = {};
       hostState.cumulative = {};
 
       $('myPeerId').textContent = '—';
@@ -4358,6 +4368,19 @@ function eval3NoJoker(cards) {
 
         log(`${(existed || migratedFromId) ? '玩家重連' : '玩家加入'}：${name} (${pid})`);
 
+        if (hostState.revealed) {
+          if (hostState.nextReadyMap?.[pid] === undefined) {
+            hostState.nextReadyMap = hostState.nextReadyMap || {};
+            hostState.nextReadyMap[pid] = false;
+            broadcastNextReady();
+            nextReadyKickTimers[pid] = setTimeout(() => {
+              if (!hostState.revealed) return;
+              if (hostState.nextReadyMap?.[pid]) return;
+              handleAsHost(null, {t:'kick', targetId: pid, reason: 'ready-timeout'});
+            }, NEXT_READY_TIMEOUT_MS);
+          }
+        }
+
         // If game already started, send a start snapshot so the client doesn't stay in "請房主開始" state.
         try {
           if (hostState.round > 0) {
@@ -4456,6 +4479,16 @@ function eval3NoJoker(cards) {
         return;
       }
 
+      if (msg.t === 'nextReady') {
+        const pid = conn.peer;
+        const round = Number(msg.round || 0);
+        if (!hostState.revealed) return;
+        if (round && round !== hostState.round) return;
+        if (!hostState.nextReadyMap || hostState.nextReadyMap[pid] === undefined) return;
+        setNextReady(pid);
+        return;
+      }
+
       if (msg.t === 'dealerPickChoice') {
         // controller sends {round, kind, dealerId}
         const pick = msg.pick || {};
@@ -4516,6 +4549,13 @@ function eval3NoJoker(cards) {
         delete hostState.players[targetId];
         delete hostState.dealt[targetId];
         delete hostState.submissions[targetId];
+        if (hostState.nextReadyMap?.[targetId] !== undefined) {
+          delete hostState.nextReadyMap[targetId];
+        }
+        if (nextReadyKickTimers[targetId]) {
+          clearTimeout(nextReadyKickTimers[targetId]);
+          delete nextReadyKickTimers[targetId];
+        }
         //delete hostState.cumulative[targetId]; // 選擇性：是否連分數一起刪除，通常踢人就全刪
         
         // 3. 從座位表移除
@@ -4525,6 +4565,7 @@ function eval3NoJoker(cards) {
 
         // 4. 更新給所有人
         broadcastPlayers();
+        if (hostState.revealed) broadcastNextReady();
         renderPlayers();
         renderReadyList();
         try { renderTableSeats(); } catch {}
@@ -4675,6 +4716,7 @@ function eval3NoJoker(cards) {
         updateMidActionButton();
         // ready map for seat tick
         try { clientState.readyMap = msg.ready || {}; } catch {}
+        try { clientState.nextReadyMap = {}; } catch {}
         clientState.dealerId = null;
         clientState.cards9 = msg.cards9 || [];
         clientState.dealerCard = null;
@@ -4710,6 +4752,15 @@ function eval3NoJoker(cards) {
         try { clientState.readyMap = msg.ready || {}; } catch {}
         try { renderTableSeats(); } catch {}
         renderReadyList(msg.ready);
+        return;
+      }
+
+      if (msg.t === 'nextReady') {
+        if (msg.round && Number(msg.round) !== Number(clientState.round)) return;
+        try { clientState.nextReadyMap = msg.ready || {}; } catch {}
+        try { renderTableSeats(); } catch {}
+        renderReadyList();
+        updateMidActionButton();
         return;
       }
 
@@ -4784,6 +4835,7 @@ function eval3NoJoker(cards) {
         updateMidActionButton();
         clientState.dealerId = null;
         try { clientState.readyMap = {}; } catch {}
+        try { clientState.nextReadyMap = {}; } catch {}
         try { renderTableSeats(); } catch {}
         $('scoreBody').innerHTML = '';
         renderGameHeader();
@@ -4908,6 +4960,67 @@ function eval3NoJoker(cards) {
       return out;
     }
 
+    function roundOverForUi() {
+      return isHost ? hostState.revealed : !!clientState.lastReveal;
+    }
+
+    function nextReadyMapForUi() {
+      return isHost ? hostState.nextReadyMap : clientState.nextReadyMap;
+    }
+
+    function allNextReady() {
+      if (!isHost) return false;
+      const rmap = hostState.nextReadyMap || {};
+      const ids = Object.keys(rmap);
+      if (!ids.length) return false;
+      return ids.every((id) => rmap[id]);
+    }
+
+    function clearNextReadyTimers() {
+      Object.values(nextReadyKickTimers).forEach((timer) => clearTimeout(timer));
+      nextReadyKickTimers = {};
+    }
+
+    function broadcastNextReady() {
+      if (!isHost) return;
+      broadcast({t:'nextReady', ready: hostState.nextReadyMap, round: hostState.round});
+      try { clientState.nextReadyMap = { ...(hostState.nextReadyMap || {}) }; } catch {}
+      try { renderReadyList(); } catch {}
+      try { renderTableSeats(); } catch {}
+      try { updateMidActionButton(); } catch {}
+    }
+
+    function startNextReadyPhase(players) {
+      if (!isHost) return;
+      clearNextReadyTimers();
+      const ids = Array.isArray(players) && players.length
+        ? players.map((p) => p.id)
+        : roundPlayerIds();
+      hostState.nextReadyMap = {};
+      for (const id of ids) hostState.nextReadyMap[id] = false;
+      broadcastNextReady();
+
+      for (const id of ids) {
+        if (id === hostId) continue;
+        nextReadyKickTimers[id] = setTimeout(() => {
+          if (!hostState.revealed) return;
+          if (hostState.nextReadyMap?.[id]) return;
+          handleAsHost(null, {t:'kick', targetId: id, reason: 'ready-timeout'});
+        }, NEXT_READY_TIMEOUT_MS);
+      }
+    }
+
+    function setNextReady(pid) {
+      if (!isHost) return;
+      if (!pid || !hostState.nextReadyMap || hostState.nextReadyMap[pid]) return;
+      hostState.nextReadyMap[pid] = true;
+      if (nextReadyKickTimers[pid]) {
+        clearTimeout(nextReadyKickTimers[pid]);
+        delete nextReadyKickTimers[pid];
+      }
+      broadcastNextReady();
+    }
+
     function migrateHostIdentity(prevId, nextId) {
       if (!prevId || !nextId || prevId === nextId) return;
       if (hostState.dealt?.[prevId]) {
@@ -5027,6 +5140,10 @@ function eval3NoJoker(cards) {
 
     function nextRound() {
       if (!isHost) return;
+      if (hostState.revealed && !allNextReady()) {
+        toast('尚有玩家未準備，請等待所有人準備');
+        return;
+      }
       hostState.round += 1;
       hostState.revealed = false;
       updateMidActionButton();
@@ -5036,8 +5153,11 @@ function eval3NoJoker(cards) {
       hostState.dealerId = null;
       hostState.dealerPick = null;
       hostState.dealerOverride = null;
+      hostState.nextReadyMap = {};
+      clearNextReadyTimers();
       // clear ready map for new round (seat tick)
       try { clientState.readyMap = readyMapForBroadcast(); } catch {}
+      try { clientState.nextReadyMap = {}; } catch {}
       try { renderTableSeats(); } catch {}
 
       if (hostState.round > hostState.settings.roundsTotal) {
@@ -5260,12 +5380,18 @@ function revealRound() {
           updateMyCumulative();
           try { clientState.readyMap = readyMapForBroadcast();
           } catch {}
-          try { renderTableSeats(); playRevealOnTable(payload);
+          let revealPromise = null;
+          try { renderTableSeats(); revealPromise = playRevealOnTable(payload);
           } catch {}
           $('btnOpenLastReveal').classList.remove('hidden');
           updateMidActionButton();
           try { updateMidActionButton();
           } catch {}
+          if (revealPromise && typeof revealPromise.finally === 'function') {
+            revealPromise.finally(() => startNextReadyPhase(payload.players));
+          } else {
+            startNextReadyPhase(payload.players);
+          }
           glog('房主已結算本局');
           try {
             if (persistState.enabled) {
@@ -5365,12 +5491,18 @@ function revealRound() {
         updateMyCumulative();
         try { clientState.readyMap = readyMapForBroadcast();
         } catch {}
-        try { renderTableSeats(); playRevealOnTable(payload);
+        let revealPromise = null;
+        try { renderTableSeats(); revealPromise = playRevealOnTable(payload);
         } catch {}
         $('btnOpenLastReveal').classList.remove('hidden');
         updateMidActionButton();
         try { updateMidActionButton();
         } catch {}
+        if (revealPromise && typeof revealPromise.finally === 'function') {
+          revealPromise.finally(() => startNextReadyPhase(payload.players));
+        } else {
+          startNextReadyPhase(payload.players);
+        }
         glog('房主已結算本局');
         try {
           if (persistState.enabled) {
@@ -5557,11 +5689,17 @@ function revealRound() {
       updateMyCumulative();
       try { clientState.readyMap = readyMapForBroadcast();
       } catch {}
-      try { renderTableSeats(); playRevealOnTable(payload);
+      let revealPromise = null;
+      try { renderTableSeats(); revealPromise = playRevealOnTable(payload);
       } catch {}
 
       $('btnOpenLastReveal').classList.remove('hidden');
       updateMidActionButton();
+      if (revealPromise && typeof revealPromise.finally === 'function') {
+        revealPromise.finally(() => startNextReadyPhase(payload.players));
+      } else {
+        startNextReadyPhase(payload.players);
+      }
       try {
         if (persistState.enabled) {
           maybeSavePersistRecordAfterRound().catch(()=>{});
@@ -5746,16 +5884,50 @@ function revealRound() {
       
       // 判斷是否處於「已結算/已比牌」狀態
       // 房主看 hostState.revealed，玩家看 clientState.lastReveal
-      const isRoundOver = isHost ? hostState.revealed : !!clientState.lastReveal;
+      const isRoundOver = roundOverForUi();
       const started = (isHost ? (hostState.round > 0) : (clientState.round > 0));
 
-      if (isHost && isRoundOver) {
-          // 情況 A: 房主 & 該局已結束 -> 顯示「下一局」
-          centerBtn.className = 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-6 py-3 chip bg-gradient-to-b from-emerald-400 to-emerald-600 text-emerald-50 text-sm font-black hover:brightness-110 active:scale-[0.99] transition shadow-[0_0_15px_rgba(16,185,129,0.5)]';
-          centerBtn.textContent = '下一局';
-          centerBtn.onclick = () => {
-              nextRound(); // 直接呼叫房主的下一局函式
-          };
+      if (isRoundOver) {
+          const readyMap = nextReadyMapForUi() || {};
+          const selfId = isHost ? hostId : myId;
+          const selfReady = !!readyMap?.[selfId];
+          const canNext = isHost && allNextReady();
+          centerBtn.className = 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-6 py-3 chip text-emerald-50 text-sm font-black transition shadow-[0_0_15px_rgba(16,185,129,0.5)]';
+          if (canNext) {
+            centerBtn.classList.add('bg-gradient-to-b', 'from-emerald-400', 'to-emerald-600');
+          } else {
+            centerBtn.classList.add('bg-white/10', 'border', 'border-white/10');
+          }
+          if (isHost) {
+            if (!selfReady) {
+              centerBtn.textContent = '準備';
+              centerBtn.onclick = () => setNextReady(hostId);
+            } else if (canNext) {
+              centerBtn.textContent = '下一局';
+              centerBtn.onclick = () => nextRound();
+            } else {
+              centerBtn.textContent = '等待準備';
+              centerBtn.disabled = true;
+              centerBtn.classList.add('opacity-70', 'cursor-not-allowed');
+            }
+          } else {
+            if (!selfReady) {
+              centerBtn.textContent = '準備';
+              centerBtn.onclick = () => {
+                if (!clientConn) return;
+                try {
+                  clientState.nextReadyMap = { ...(clientState.nextReadyMap || {}), [myId]: true };
+                } catch {}
+                send(clientConn, {t:'nextReady', round: clientState.round});
+                renderReadyList();
+                renderTableSeats();
+              };
+            } else {
+              centerBtn.textContent = '已準備';
+              centerBtn.disabled = true;
+              centerBtn.classList.add('opacity-70', 'cursor-not-allowed');
+            }
+          }
       } else {
           // 情況 B: 正常狀態 (HKE九張 / 開始)
           centerBtn.className = 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-6 py-3 chip text-amber-100 text-sm font-black hover:brightness-110 active:scale-[0.99] transition';
@@ -5796,7 +5968,9 @@ function revealRound() {
         const delta = 90 - selfDeg;
         startDeg += delta;
       }
-      const readyMap = isHost ? readyMapForBroadcast() : (clientState.readyMap || {});
+      const readyMap = isRoundOver
+        ? (nextReadyMapForUi() || {})
+        : (isHost ? readyMapForBroadcast() : (clientState.readyMap || {}));
       
       // positions around a circle
       for (let i=0;i<N;i++) {
@@ -6114,7 +6288,7 @@ function revealRound() {
 
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-      (async () => {
+      const run = (async () => {
         let delay = 240; // slow down ~2x
         for (const step of steps) {
           const ui = seatUi[step.pid];
@@ -6131,6 +6305,7 @@ function revealRound() {
           await sleep(240);
         }
       })();
+      return run;
     }
 
     // -------------------- Rendering: game --------------------
@@ -6612,9 +6787,14 @@ function revealRound() {
       const btn = $('btnMidAction');
       if (!btn) return;
 
-      // Host: show "下一局" as long as a round has been revealed (some flows may set lastReveal but not repaint revealed flag in time)
-      const hostCanNext = isHost && (!!hostState.revealed || !!clientState.lastReveal);
-      btn.textContent = hostCanNext ? '下一局' : '牌組';
+      const hostReveal = isHost && roundOverForUi();
+      const hostReady = isHost && !!hostState.nextReadyMap?.[hostId];
+      const hostCanNext = isHost && hostReveal && allNextReady();
+      if (hostReveal) {
+        btn.textContent = hostCanNext ? '下一局' : (hostReady ? '等待準備' : '準備');
+      } else {
+        btn.textContent = '牌組';
+      }
 
       // Reset class to baseline then add active style
       btn.className = 'flex-1 text-xs px-3 py-2 rounded-xl border ' + (hostCanNext
@@ -6627,6 +6807,12 @@ function revealRound() {
       if (!root) return;
       root.innerHTML = '';
 
+      const roundOver = roundOverForUi();
+      const fallbackMap = isHost ? readyMapForBroadcast() : (clientState.readyMap || {});
+      const rmap = roundOver ? (nextReadyMapForUi() || {}) : (readyMap || fallbackMap || null);
+      const onLabel = roundOver ? '已準備' : '已提交';
+      const offLabel = roundOver ? '未準備' : '未提交';
+
       let players = [];
       if (isHost) {
         players = [{id: hostId, name: clientState.myName + '（房主）'}];
@@ -6636,19 +6822,25 @@ function revealRound() {
         for (const pid in clientState.players) players.push({id: pid, name: clientState.players[pid].name});
       }
 
-      const rmap = readyMap || null;
-
       for (const p of players) {
         const row = el('div', 'flex items-center justify-between gap-2 rounded-xl bg-black/25 border border-white/10 px-3 py-2');
         row.appendChild(el('div', 'text-sm text-slate-50 truncate', p.name));
         const ready = rmap ? !!rmap[p.id] : false;
-        const badge = el('div', `text-xs px-2 py-1 rounded-full ${ready ? 'bg-emerald-500/15 border border-emerald-300/25 text-emerald-100' : 'bg-white/10 border border-white/10 text-emerald-50/80'}`, ready ? '已提交' : '未提交');
+        const badge = el('div', `text-xs px-2 py-1 rounded-full ${ready ? 'bg-emerald-500/15 border border-emerald-300/25 text-emerald-100' : 'bg-white/10 border border-white/10 text-emerald-50/80'}`, ready ? onLabel : offLabel);
         row.appendChild(badge);
         root.appendChild(row);
       }
 
       if (isHost) {
-        $('btnNextRound').classList.toggle('hidden', !hostState.revealed);
+        const btn = $('btnNextRound');
+        btn.classList.toggle('hidden', !hostState.revealed);
+        if (hostState.revealed) {
+          const canNext = allNextReady();
+          btn.disabled = !canNext;
+          btn.textContent = canNext ? '下一局（房主）' : '等待準備';
+          btn.classList.toggle('opacity-70', !canNext);
+          btn.classList.toggle('cursor-not-allowed', !canNext);
+        }
       }
     }
 
@@ -6716,13 +6908,7 @@ function revealRound() {
         body.appendChild(tr);
       }
 
-      renderReadyList(readyMapForReveal(revealPayload));
-
-      function readyMapForReveal(payload) {
-        const rm = {};
-        for (const p of (payload.players||[])) rm[p.id] = !!payload.submissions?.[p.id];
-        return rm;
-      }
+      renderReadyList();
     }
 
     // -------------------- Submit / Arrange --------------------
@@ -7289,6 +7475,10 @@ function revealRound() {
 
     $('btnNextRound').addEventListener('click', () => {
       if (!isHost) return;
+      if (!allNextReady()) {
+        toast('尚有玩家未準備');
+        return;
+      }
       nextRound();
     });
 
@@ -7313,6 +7503,14 @@ function revealRound() {
     $('btnMidAction').addEventListener('click', () => {
       // Host: after reveal -> next round. Otherwise: open Arrange (牌組)
       if (isHost && hostState.revealed) {
+        if (!hostState.nextReadyMap?.[hostId]) {
+          setNextReady(hostId);
+          return;
+        }
+        if (!allNextReady()) {
+          toast('請等待所有人準備');
+          return;
+        }
         nextRound();
       } else {
         openArrangeModal();
