@@ -3197,9 +3197,17 @@ function eval3NoJoker(cards) {
         isHost = false;
         $('myPeerId').textContent = clientState.roomId || msg.roomId;
         setRoleBadges();
-        clientConn = createRelayConn(hostId, false);
-        wireConn(clientConn, false);
-        clientConn.emit('open');
+        clientState.waitingForHost = !hostId;
+        if (hostId) {
+          clientConn = createRelayConn(hostId, false);
+          wireConn(clientConn, false);
+          clientConn.emit('open');
+        } else {
+          clientState.connected = false;
+          clientState.joining = false;
+          stopClientHeartbeat();
+          setBadge(false, '等待房主上線');
+        }
         return;
       }
 
@@ -3227,11 +3235,30 @@ function eval3NoJoker(cards) {
 
       if (msg.t === 'host-left') {
         if (isHost) return;
-        toast('房主已離線');
+        toast('房主已離線，等待重新連線');
+        clientState.waitingForHost = true;
+        hostId = null;
         if (clientConn) clientConn.close();
         clientState.connected = false;
         clientState.joining = false;
-        setBadge(false, '斷線');
+        stopClientHeartbeat();
+        setBadge(false, '等待房主重連');
+        return;
+      }
+
+      if (msg.t === 'host-reconnected') {
+        if (isHost) return;
+        hostId = msg.hostId;
+        if (!hostId) return;
+        if (msg.hostName) clientState.hostName = String(msg.hostName || '房主');
+        clientState.waitingForHost = false;
+        clientState.connected = false;
+        clientState.joining = false;
+        if (clientConn) { try { clientConn.close(); } catch {} }
+        clientConn = createRelayConn(hostId, false);
+        wireConn(clientConn, false);
+        clientConn.emit('open');
+        setBadge(false, '房主已重新連線');
         return;
       }
 
@@ -3334,6 +3361,7 @@ function eval3NoJoker(cards) {
       if (isHost) return;
       if (!clientState.roomId) return;
       if (clientState.joining) return;
+      if (clientState.waitingForHost) return;
       if (document.hidden) return; // wait until visible
 
       if (clientReconnectTimer) return;
@@ -3428,6 +3456,7 @@ function eval3NoJoker(cards) {
       chatUnread: false,
       bottomBarCollapsed: true,
       readyMap: {}, // {peerId: boolean} latest ready status from host
+      waitingForHost: false,
     };
 
     // -------------------- Persisted room record (DAY/NIG) via GitHub repo + Cloudflare Worker --------------------
@@ -4025,7 +4054,7 @@ function eval3NoJoker(cards) {
           stopClientHeartbeat();
           setBadge(false, '連線失敗');
           log(`連線錯誤：${type}`);
-          if (wasConnected) {
+          if (wasConnected && !clientState.waitingForHost) {
             toast('連線中斷，嘗試自動重連…');
             scheduleClientReconnect('conn-error');
           } else {
@@ -4058,7 +4087,7 @@ function eval3NoJoker(cards) {
           log('與房主連線已關閉');
           if (wasJoining) {
             toast('連線被關閉：可能房主不在線/房號錯誤，或 ICE 無法打通（跨網/NAT 請測試 TURN）');
-          } else if (wasConnected) {
+          } else if (wasConnected && !clientState.waitingForHost) {
             toast('連線中斷，嘗試自動重連…');
             scheduleClientReconnect('conn-close');
           }
