@@ -15,7 +15,6 @@
   <link rel="apple-touch-icon" href="./icon.svg" />
 
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     html, body { height: 100%; touch-action: manipulation; }
     button, input, select { touch-action: manipulation; }
@@ -3041,13 +3040,222 @@ function eval3NoJoker(cards) {
       return {ok, bonus: ok ? (bonusMap[c] || 0) : 0};
     }
 
-    // -------------------- PeerJS networking --------------------
-    let peer = null;
+    // -------------------- Relay (WebSocket) networking --------------------
+    const DEFAULT_RELAY_URL = 'https://hke9.onrender.com';
+
+    let relaySocket = null;
+    let relayIntent = null;
+    let relayConnecting = false;
+    let hostRoomId = null;
     let isHost = false;
     let hostId = null;
     let myId = null;
+    const relayConnections = new Map();
 
-    // ---- Keepalive / Reconnect (best effort; iOS may still suspend WebRTC in background) ----
+    class RelayConnection {
+      constructor(peerId, sendFn) {
+        this.peer = peerId;
+        this.open = true;
+        this._sendFn = sendFn;
+        this._handlers = { open: [], data: [], close: [], error: [] };
+      }
+
+      on(type, handler) {
+        if (!this._handlers[type]) this._handlers[type] = [];
+        this._handlers[type].push(handler);
+      }
+
+      emit(type, payload) {
+        const list = this._handlers[type] || [];
+        for (const fn of list) {
+          try { fn(payload); } catch (e) { console.error(e); }
+        }
+      }
+
+      send(payload) {
+        if (!this.open) throw new Error('connection closed');
+        this._sendFn(payload);
+      }
+
+      close() {
+        if (!this.open) return;
+        this.open = false;
+        this.emit('close');
+      }
+    }
+
+    function relayBaseUrl() {
+      try {
+        const v = localStorage.getItem('ninePokerRelayUrl');
+        return (v && String(v).trim()) ? String(v).trim().replace(/\/+$/, '') : DEFAULT_RELAY_URL;
+      } catch {
+        return DEFAULT_RELAY_URL;
+      }
+    }
+
+    function relayWsUrl() {
+      const base = relayBaseUrl();
+      if (!base) return '';
+      if (base.startsWith('ws://') || base.startsWith('wss://')) return base;
+      return base.replace(/^http/i, 'ws');
+    }
+
+    function relaySocketOpen() {
+      return relaySocket && relaySocket.readyState === WebSocket.OPEN;
+    }
+
+    function closeRelaySocket() {
+      if (relaySocket) {
+        try { relaySocket.close(); } catch {}
+      }
+      relaySocket = null;
+      relayConnecting = false;
+    }
+
+    function connectRelay(intent=null) {
+      if (intent) relayIntent = intent;
+      if (relaySocketOpen() || relayConnecting) return;
+      const url = relayWsUrl();
+      if (!url) {
+        toast('Relay 伺服器網址未設定');
+        return;
+      }
+      relayConnecting = true;
+      relaySocket = new WebSocket(url);
+
+      relaySocket.addEventListener('open', () => {
+        relayConnecting = false;
+        if (!relaySocketOpen()) return;
+        if (!relayIntent) return;
+        if (relayIntent.type === 'host') {
+          relaySocket.send(JSON.stringify({ t: 'create-room', roomId: relayIntent.roomId, name: clientState.myName }));
+        } else if (relayIntent.type === 'join') {
+          relaySocket.send(JSON.stringify({ t: 'join-room', roomId: relayIntent.roomId, name: clientState.myName }));
+        }
+      });
+
+      relaySocket.addEventListener('message', (event) => {
+        let msg;
+        try {
+          msg = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+        handleRelayMessage(msg);
+      });
+
+      relaySocket.addEventListener('close', () => {
+        relayConnecting = false;
+        setBadge(false, '已斷線');
+        if (isHost) {
+          for (const pid in hostState.players) {
+            if (hostState.players[pid]?.conn) {
+              try { hostState.players[pid].conn.close(); } catch {}
+            }
+          }
+          relayConnections.clear();
+        } else if (clientConn) {
+          try { clientConn.close(); } catch {}
+        }
+        if (!isHost && clientState.roomId) {
+          scheduleClientReconnect('relay-close');
+        }
+      });
+
+      relaySocket.addEventListener('error', () => {
+        relayConnecting = false;
+        setBadge(false, '連線錯誤');
+      });
+    }
+
+    function handleRelayMessage(msg) {
+      if (!msg || typeof msg !== 'object') return;
+      if (msg.t === 'error') {
+        const message = msg.message || '連線錯誤';
+        toast(message);
+        log(`Relay error: ${message}`);
+        return;
+      }
+
+      if (msg.t === 'hosted') {
+        hostRoomId = msg.roomId;
+        clientState.roomId = msg.roomId;
+        myId = msg.id;
+        hostId = msg.hostId;
+        isHost = true;
+        $('myPeerId').textContent = hostRoomId || msg.roomId;
+        setRoleBadges();
+        setBadge(true, '房間已建立');
+        void finalizeHostCreation();
+        return;
+      }
+
+      if (msg.t === 'joined') {
+        clientState.roomId = msg.roomId;
+        myId = msg.id;
+        hostId = msg.hostId;
+        isHost = false;
+        $('myPeerId').textContent = clientState.roomId || msg.roomId;
+        setRoleBadges();
+        clientConn = createRelayConn(hostId, false);
+        wireConn(clientConn, false);
+        clientConn.emit('open');
+        return;
+      }
+
+      if (msg.t === 'client-joined') {
+        if (!isHost) return;
+        const pid = msg.id;
+        if (!pid) return;
+        if (!relayConnections.has(pid) && !hostState.players[pid]?.conn) {
+          const conn = createRelayConn(pid, true);
+          relayConnections.set(pid, conn);
+          wireConn(conn, true);
+          conn.emit('open');
+        }
+        return;
+      }
+
+      if (msg.t === 'client-left') {
+        if (!isHost) return;
+        const pid = msg.id;
+        const conn = hostState.players[pid]?.conn || relayConnections.get(pid);
+        if (conn) conn.close();
+        relayConnections.delete(pid);
+        return;
+      }
+
+      if (msg.t === 'host-left') {
+        if (isHost) return;
+        toast('房主已離線');
+        if (clientConn) clientConn.close();
+        clientState.connected = false;
+        clientState.joining = false;
+        setBadge(false, '斷線');
+        return;
+      }
+
+      if (msg.t === 'relay') {
+        const fromId = msg.fromId;
+        const payload = msg.payload;
+        if (isHost) {
+          const conn = hostState.players[fromId]?.conn || relayConnections.get(fromId);
+          if (conn) conn.emit('data', payload);
+        } else if (clientConn) {
+          clientConn.emit('data', payload);
+        }
+      }
+    }
+
+    function createRelayConn(targetId, isHostSide) {
+      return new RelayConnection(targetId, (payload) => {
+        if (!relaySocketOpen()) throw new Error('Relay not connected');
+        const to = isHostSide ? targetId : hostId;
+        relaySocket.send(JSON.stringify({ t: 'relay', to, payload }));
+      });
+    }
+
+    // ---- Keepalive / Reconnect (best effort; iOS may still suspend background tabs) ----
     const HEARTBEAT_MS = 8000;
     const HEARTBEAT_TIMEOUT_MS = 30000;
     let hostHeartbeatTimer = null;
@@ -3115,13 +3323,11 @@ function eval3NoJoker(cards) {
       }
     }
 
-    function tryPeerServerReconnect() {
-      try {
-        if (peer && peer.disconnected && !peer.destroyed) {
-          peer.reconnect();
-          setBadge(false, '重連中…');
-        }
-      } catch {}
+    function tryRelayReconnect() {
+      if (relaySocketOpen() || relayConnecting) return;
+      if (!relayIntent) return;
+      connectRelay(relayIntent);
+      setBadge(false, '重連中…');
     }
 
     function scheduleClientReconnect(reason='') {
@@ -3142,31 +3348,14 @@ function eval3NoJoker(cards) {
         const max = 6;
         setBadge(false, `重新連線中…（${clientReconnectAttempts}/${max}）`);
 
-        tryPeerServerReconnect();
+        tryRelayReconnect();
 
         try {
           if (clientConn) { try { clientConn.close(); } catch {} }
         } catch {}
         clientConn = null;
 
-        try {
-          if (!peer || peer.destroyed) {
-            // recreate peer (may get a new id; best effort)
-            createPeerIfNeeded();
-          }
-        } catch {}
-
-        // wait for peer open then connect
-        const wait = setInterval(() => {
-          if (!(peer && myId)) return;
-          clearInterval(wait);
-          try {
-            clientConn = peer.connect(clientState.roomId);
-            wireConn(clientConn, false);
-          } catch (e) {
-            log('reconnect peer.connect failed: ' + (e?.message || e));
-          }
-        }, 120);
+        connectRelay({ type: 'join', roomId: clientState.roomId });
 
         if (clientReconnectAttempts >= max) {
           clientReconnectTimer = null;
@@ -3189,8 +3378,7 @@ function eval3NoJoker(cards) {
 
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) return;
-      // coming back to foreground: try to restore peer server & data connection
-      tryPeerServerReconnect();
+      tryRelayReconnect();
       if (!isHost && !clientState.connected && clientState.roomId) {
         scheduleClientReconnect('resume');
       }
@@ -3446,11 +3634,11 @@ function eval3NoJoker(cards) {
     }
 
     function setRoleBadges() {
-      const role = !peer ? '未連線' : (isHost ? '房主' : '玩家');
+      const role = !relaySocketOpen() ? '未連線' : (isHost ? '房主' : '玩家');
       $('roleBadge').textContent = role;
       $('gameRoleBadge').textContent = role;
 
-      const hostReady = !!(isHost && peer && myId);
+      const hostReady = !!(isHost && relaySocketOpen() && myId);
 
       // Lobby buttons
       $('btnApplyRounds').classList.toggle('hidden', !hostReady);
@@ -3482,13 +3670,13 @@ function eval3NoJoker(cards) {
       clientReconnectAttempts = 0;
       try { stopArrangeTimer(); } catch {}
 
-      if (peer) {
-        try { peer.destroy(); } catch {}
-      }
-      peer = null;
+      closeRelaySocket();
+      relayIntent = null;
       isHost = false;
       hostId = null;
+      hostRoomId = null;
       myId = null;
+      relayConnections.clear();
       if (clientConn) {
         try { clientConn.close(); } catch {}
       }
@@ -3541,6 +3729,47 @@ function eval3NoJoker(cards) {
       updateBodyOverflow();
       updateChatUnread();
       log('已重置');
+    }
+
+    async function finalizeHostCreation() {
+      // Init seat order and persisted record (DAY/NIG)
+      try {
+        const rid = String(hostRoomId || '').trim().toUpperCase();
+        if (isPersistRoomId(rid)) {
+          await maybeLoadPersistRecordForHost(rid);
+        } else {
+          persistState.enabled = false;
+          persistState.roomId = '';
+        }
+      } catch {}
+
+      // If we loaded persisted scores for host, keep it; otherwise reset.
+      if (!persistState.enabled) {
+        hostState.cumulative = {};
+      } else {
+        // ensure host cumulative exists
+        try { applyPersistScoreForPeer(hostId, clientState.myName); } catch {}
+      }
+      clientState.cumulative = hostState.cumulative;
+
+      try {
+        if (!Array.isArray(hostState.seatOrder) || hostState.seatOrder.length === 0) hostState.seatOrder = [hostId];
+        else if (hostState.seatOrder[0] !== hostId) hostState.seatOrder = [hostId, ...hostState.seatOrder.filter(x => x && x !== hostId)];
+      } catch {}
+
+      broadcastPlayers();
+      renderPlayers();
+      setRoleBadges();
+      hostApplyRounds();
+      updateMyCumulative();
+      setBadge(true, '房間已建立');
+      log('房間已建立，等待玩家加入');
+      // show table immediately (waiting room)
+      try { showPage('game'); renderTableSeats(); } catch {}
+
+      $('btnLeave').classList.remove('hidden');
+      $('btnCopyRoom').classList.remove('hidden');
+      $('btnCopyLink').classList.remove('hidden');
     }
 
 
@@ -3753,101 +3982,7 @@ function eval3NoJoker(cards) {
       }
     }
 
-    function createPeerIfNeeded(customId=null) {
-      if (peer) return;
-      const opts = buildPeerOptions();
-
-      // PeerJS: 必須用 new Peer(customId, opts) 才會指定 id
-      peer = customId ? new Peer(customId, opts) : new Peer(opts);
-
-      peer.on('open', id => {
-        myId = id;
-        $('myPeerId').textContent = id;
-
-        if (isHost) {
-          hostId = id;
-          clientState.roomId = id;
-          // init seat order with host at first
-          try {
-            if (!Array.isArray(hostState.seatOrder) || hostState.seatOrder.length === 0) hostState.seatOrder = [id];
-            else if (hostState.seatOrder[0] !== id) hostState.seatOrder = [id, ...hostState.seatOrder.filter(x => x && x !== id)];
-          } catch {}
-          setBadge(true, '房間已建立');
-        } else {
-          // client: do not override badge if we are in the middle of joining
-          if (clientState.joining) {
-            setBadge(false, '連線中…');
-          } else {
-            setBadge(true, '已就緒');
-          }
-        }
-
-        $('btnLeave').classList.remove('hidden');
-        $('btnCopyRoom').classList.remove('hidden');
-        $('btnCopyLink').classList.remove('hidden');
-        setRoleBadges();
-        renderPlayers();
-        log(`Peer 已建立：${id}`);
-      });
-
-      peer.on('connection', (conn) => {
-        if (!isHost) {
-          conn.close();
-          return;
-        }
-        wireConn(conn, true);
-      });
-
-      peer.on('disconnected', () => {
-        setBadge(false, '已斷線');
-        log('Peer disconnected');
-      });
-      peer.on('close', () => {
-        setBadge(false, '已關閉');
-        log('Peer closed');
-      });
-      peer.on('error', (err) => {
-        setBadge(false, '錯誤');
-        const t = err?.type || err?.message || String(err);
-        log(`Peer error: ${t}`);
-
-        if (String(err?.type || '').includes('unavailable-id')) {
-          toast('此房間號已被使用，請更換自訂房間號後再建立');
-          setTimeout(() => resetAll(), 50);
-          return;
-        }
-
-        if (String(err?.type || '').includes('network')) {
-          toast('PeerJS 網路異常，請稍後再試或更換網路');
-          return;
-        }
-
-        // Helpful hint for cross-network/NAT issues
-        if (String(err?.type || '').includes('peer-unavailable') || String(err?.type || '').includes('disconnected')) {
-          toast('若在不同網絡仍連不上，請到「進階連線」設定 TURN（中繼）');
-        }
-      });
-    }
-
     function wireConn(conn, incomingToHost=false) {
-      // WebRTC diagnostics (best-effort). PeerJS internal API: conn.peerConnection may exist.
-      try {
-        const pc = conn.peerConnection;
-        if (pc && !pc.__hke9Bound) {
-          pc.__hke9Bound = true;
-          const tag = incomingToHost ? `pc(host<- ${conn.peer})` : `pc(me-> ${conn.peer})`;
-          pc.addEventListener('iceconnectionstatechange', () => {
-            log(`${tag} iceConnectionState=${pc.iceConnectionState}`);
-          });
-          pc.addEventListener('connectionstatechange', () => {
-            log(`${tag} connectionState=${pc.connectionState}`);
-          });
-          pc.addEventListener('icegatheringstatechange', () => {
-            log(`${tag} iceGatheringState=${pc.iceGatheringState}`);
-          });
-        }
-      } catch {}
-
       conn.on('open', () => {
         if (isHost && incomingToHost) {
           log(`玩家連線進來：${conn.peer}`);
@@ -3980,6 +4115,7 @@ function eval3NoJoker(cards) {
     function handleAsHost(conn, msg) {
       if (msg.t === 'join') {
         const pid = conn.peer;
+        try { relayConnections.delete(pid); } catch {}
 
         // room full check (host + players <= MAX_PLAYERS_TOTAL)
         const currentTotal = 1 + Object.keys(hostState.players).length;
@@ -4688,7 +4824,7 @@ function eval3NoJoker(cards) {
 
     function startGame() {
       if (!isHost) return;
-      if (!peer || !myId) return;
+      if (!relaySocketOpen() || !myId) return;
       if (Object.keys(hostState.players).length < 1) {
         toast('至少需要 2 人（含房主）才能開始');
         return;
@@ -4705,7 +4841,7 @@ function eval3NoJoker(cards) {
 
       broadcast({t:'start', round: 1, settings: hostState.settings, cumulative: hostState.cumulative});
       showPage('game');
-      $('gameRoomId').textContent = myId;
+      $('gameRoomId').textContent = hostRoomId || clientState.roomId || myId;
       renderGameHeader();
       try { renderTableSeats(); } catch {}
       log(`房主開始遊戲：共 ${hostState.settings.roundsTotal} 局`);
@@ -4962,15 +5098,16 @@ function revealRound() {
           } catch {}
 
           if (hostState.round >= hostState.settings.roundsTotal) {
+            const roomRef = hostRoomId || clientState.roomId || myId;
             const overPayload = {
               t:'gameOver',
-              roomId: myId,
+              roomId: roomRef,
               players: allPlayersForBroadcast(),
               cumulative: hostState.cumulative,
             };
             //broadcast(overPayload);
             clientState.pendingGameOver = {
-              roomId: myId,
+              roomId: roomRef,
               players: overPayload.players,
               cumulative: overPayload.cumulative,
             };
@@ -5066,15 +5203,16 @@ function revealRound() {
         } catch {}
 
         if (hostState.round >= hostState.settings.roundsTotal) {
+          const roomRef = hostRoomId || clientState.roomId || myId;
           const overPayload = {
             t:'gameOver',
-            roomId: myId,
+            roomId: roomRef,
             players: allPlayersForBroadcast(),
             cumulative: hostState.cumulative,
           };
           //broadcast(overPayload);
           clientState.pendingGameOver = {
-            roomId: myId,
+            roomId: roomRef,
             players: overPayload.players,
             cumulative: overPayload.cumulative,
           };
@@ -5255,15 +5393,16 @@ function revealRound() {
       } catch {}
 
       if (hostState.round >= hostState.settings.roundsTotal) {
+        const roomRef = hostRoomId || clientState.roomId || myId;
         const overPayload = {
           t:'gameOver',
-          roomId: myId,
+          roomId: roomRef,
           players: allPlayersForBroadcast(),
           cumulative: hostState.cumulative,
         };
         broadcast(overPayload);
         clientState.pendingGameOver = {
-          roomId: myId,
+          roomId: roomRef,
           players: overPayload.players,
           cumulative: overPayload.cumulative,
         };
@@ -5293,7 +5432,7 @@ function revealRound() {
       const players = (() => {
         if (isHost) {
           const out = [];
-          if (peer && myId) out.push({id: myId, name: clientState.myName || '房主', isHost:true});
+          if (relaySocketOpen() && myId) out.push({id: myId, name: clientState.myName || '房主', isHost:true});
           for (const pid in hostState.players) out.push({id: pid, name: hostState.players[pid].name, isHost:false});
           return out;
         }
@@ -5347,7 +5486,7 @@ function revealRound() {
       const list = $('playersList');
       if (list) list.innerHTML = '';
       const all = [];
-      if (peer && myId) {
+      if (relaySocketOpen() && myId) {
         all.push({id: isHost ? myId : hostId || '(host)', name: isHost ? (clientState.myName+'（房主）') : '房主'});
       }
 
@@ -6709,58 +6848,34 @@ function revealRound() {
     // -------------------- Connect flows --------------------
     let clientConn = null; // persistent connection from client -> host
 
+    function generateRoomId() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let out = '';
+      for (let i = 0; i < 6; i += 1) {
+        out += chars[Math.floor(Math.random() * chars.length)];
+      }
+      return out;
+    }
+
     function becomeHost() {
       ensureName();
       isHost = true;
       hostId = null;
 
-      const custom = ($('inpCustomRoomId')?.value || '').trim();
-      const ok = !custom || /^[a-zA-Z0-9_-]{3,32}$/.test(custom);
+      let custom = ($('inpCustomRoomId')?.value || '').trim();
+      if (!custom) custom = generateRoomId();
+      const ok = /^[a-zA-Z0-9_-]{3,32}$/.test(custom);
       if (!ok) {
         toast('自訂房間號格式不正確：請用 3～32 字的英數/底線/減號');
         return;
       }
+      hostRoomId = custom.toUpperCase();
+      clientState.roomId = hostRoomId;
 
       setBadge(false, '建立中…');
-      createPeerIfNeeded(custom || null);
+      connectRelay({ type: 'host', roomId: hostRoomId });
       setRoleBadges();
-      log(custom ? `正在建立房間：${custom} …` : '正在建立房間…');
-
-      const intv = setInterval(async () => {
-        if (myId) {
-          clearInterval(intv);
-
-          // Init seat order and persisted record (DAY/NIG)
-          try {
-            const rid = String(myId||'').trim().toUpperCase();
-            if (isPersistRoomId(rid)) {
-              await maybeLoadPersistRecordForHost(rid);
-            } else {
-              persistState.enabled = false;
-              persistState.roomId = '';
-            }
-          } catch {}
-
-          // If we loaded persisted scores for host, keep it; otherwise reset.
-          if (!persistState.enabled) {
-            hostState.cumulative = {};
-          } else {
-            // ensure host cumulative exists
-            try { applyPersistScoreForPeer(hostId, clientState.myName); } catch {}
-          }
-          clientState.cumulative = hostState.cumulative;
-
-          broadcastPlayers();
-          renderPlayers();
-          setRoleBadges();
-          hostApplyRounds();
-          updateMyCumulative();
-          setBadge(true, '房間已建立');
-          log('房間已建立，等待玩家加入');
-          // show table immediately (waiting room)
-          try { showPage('game'); renderTableSeats(); } catch {}
-        }
-      }, 80);
+      log(`正在建立房間：${hostRoomId} …`);
     }
 
     function joinRoom(roomId) {
@@ -6788,74 +6903,28 @@ function revealRound() {
       } catch {}
       clientConn = null;
 
-      if (peer) {
-        try { peer.destroy(); } catch {}
-      }
-      peer = null;
+      closeRelaySocket();
       myId = null;
 
       isHost = false;
-      hostId = rid;
+      hostId = null;
       clientState.roomId = rid;
       clientState.players = {};
       clientState.connected = false;
       clientState.joining = true;
       setBadge(false, '連線中…');
 
-      createPeerIfNeeded();
+      connectRelay({ type: 'join', roomId: rid });
       setRoleBadges();
       renderPlayers();
       log(`正在加入房間：${rid} … (${JSON.stringify(rid)})`);
 
-      const startedAt = Date.now();
-      const waitPeer = setInterval(() => {
-        if (!(peer && myId)) return;
-        clearInterval(waitPeer);
-
-        let attempts = 0;
-        const maxAttempts = 4;
-
-        const attempt = () => {
-          if (clientState.connected) return;
-          attempts += 1;
-
-          try {
-            if (clientConn) { try{clientConn.close();}catch{} }
-          } catch {}
-
-          setBadge(false, `連線中…（第 ${attempts}/${maxAttempts} 次）`);
-          log(`嘗試連線到房主（第 ${attempts}/${maxAttempts} 次）：${rid}`);
-
-          try {
-            // Use the most compatible connect() signature.
-            clientConn = peer.connect(rid);
-            wireConn(clientConn, false);
-          } catch (e) {
-            log('peer.connect 失敗：' + (e?.message || e));
-          }
-
-          if (attempts < maxAttempts) {
-            setTimeout(() => {
-              if (!clientState.connected) attempt();
-            }, 2000);
-          }
-        };
-
-        attempt();
-
-        const timer = setInterval(() => {
-          if (clientState.connected) {
-            clearInterval(timer);
-            return;
-          }
-          if (Date.now() - startedAt > 14000) {
-            clearInterval(timer);
-            clientState.joining = false;
-            toast('加入房間逾時：請確認房主已建立房間且網路可用；若跨網絡/NAT 仍連不上，請測試/設定 TURN（進階連線）');
-            setBadge(false, '逾時');
-          }
-        }, 250);
-      }, 80);
+      setTimeout(() => {
+        if (clientState.connected || !clientState.joining) return;
+        clientState.joining = false;
+        toast('加入房間逾時：請確認房主已建立房間且網路可用');
+        setBadge(false, '逾時');
+      }, 14000);
     }
 
     // -------------------- URL helper --------------------
@@ -6892,7 +6961,7 @@ function revealRound() {
         $('inpCustomRoomId').value = v;
       } catch {}
 
-      if (peer) resetAll();
+      if (relaySocketOpen()) resetAll();
       becomeHost();
     });
 
@@ -6912,7 +6981,7 @@ function revealRound() {
         rid = 'MON';
       }
       
-      if (peer) resetAll();
+      if (relaySocketOpen()) resetAll();
       joinRoom(rid);
     });
 
@@ -6922,14 +6991,15 @@ function revealRound() {
     });
 
     $('btnCopyRoom').addEventListener('click', async () => {
-      if (!myId) return;
-      await navigator.clipboard.writeText(myId);
+      const room = hostRoomId || clientState.roomId;
+      if (!room) return;
+      await navigator.clipboard.writeText(room);
       toast('已複製房間號');
     });
 
     $('btnCopyLink').addEventListener('click', async () => {
-      const rid = isHost ? myId : clientState.roomId;
-      if (!rid) return toast(isHost ? '請先建立房間（取得 Peer ID）' : '尚未取得房間號');
+      const rid = (isHost ? hostRoomId : clientState.roomId) || clientState.roomId;
+      if (!rid) return toast(isHost ? '請先建立房間（取得房間號）' : '尚未取得房間號');
       try {
         const link = updateShareLink(rid);
         await navigator.clipboard.writeText(link);
@@ -7330,7 +7400,7 @@ function revealRound() {
       }
 
       const hostButtonsWatcher = setInterval(() => {
-        if (isHost && peer && myId) {
+        if (isHost && relaySocketOpen() && myId) {
           $('btnApplyRounds').classList.remove('hidden');
           $('btnStartGame').classList.remove('hidden');
           clearInterval(hostButtonsWatcher);
