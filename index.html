@@ -3046,52 +3046,6 @@ function eval3NoJoker(cards) {
     let isHost = false;
     let hostId = null;
     let myId = null;
-    let serverSocket = null;
-    const serverConns = new Map(); // peerId -> virtual conn (server relay mode)
-    const DEFAULT_SERVER_URL = 'wss://hke9.onrender.com';
-
-    function serverModeUrl() {
-      try {
-        const urlParam = new URLSearchParams(location.search).get('server');
-        const saved = localStorage.getItem('ninePokerServerUrl');
-        const raw = (urlParam || saved || DEFAULT_SERVER_URL || '').trim();
-        return raw ? raw.replace(/\/+$/,'') : '';
-      } catch {
-        return '';
-      }
-    }
-
-    function isServerMode() {
-      return !!serverModeUrl();
-    }
-
-    function serverSend(payload) {
-      if (!serverSocket || serverSocket.readyState !== WebSocket.OPEN) return;
-      serverSocket.send(JSON.stringify(payload));
-    }
-
-    function makeVirtualConn(peerId, sendFn) {
-      const handlers = { open: [], data: [], error: [], close: [] };
-      const conn = {
-        peer: peerId,
-        open: true,
-        on: (evt, fn) => {
-          if (!handlers[evt]) handlers[evt] = [];
-          handlers[evt].push(fn);
-        },
-        send: (data) => sendFn(data),
-        close: () => {
-          conn.open = false;
-          for (const fn of (handlers.close || [])) fn();
-        },
-      };
-      conn.__emit = (evt, data) => {
-        for (const fn of (handlers[evt] || [])) fn(data);
-      };
-      return conn;
-    }
-
-
 
     // ---- Keepalive / Reconnect (best effort; iOS may still suspend WebRTC in background) ----
     const HEARTBEAT_MS = 8000;
@@ -3162,7 +3116,6 @@ function eval3NoJoker(cards) {
     }
 
     function tryPeerServerReconnect() {
-      if (isServerMode()) return;
       try {
         if (peer && peer.disconnected && !peer.destroyed) {
           peer.reconnect();
@@ -3172,7 +3125,6 @@ function eval3NoJoker(cards) {
     }
 
     function scheduleClientReconnect(reason='') {
-      if (isServerMode()) return;
       if (isHost) return;
       if (!clientState.roomId) return;
       if (clientState.joining) return;
@@ -3492,73 +3444,13 @@ function eval3NoJoker(cards) {
       // Best-effort cloud save via worker
       await workerWriteRecord(rid, record);
     }
-    
-    async function renamePersistNameInRecord(roomId, oldName, newName) {
-      const rid = String(roomId || '').trim().toUpperCase();
-      if (!isPersistRoomId(rid)) return;
 
-      const prev = String(oldName || '').trim();
-      const next = String(newName || '').trim();
-      if (!prev || !next || prev === next) return;
-
-      let record = null;
-
-      try {
-        const cached = localStorage.getItem(persistKey(rid, 'record'));
-        if (cached) {
-          const json = JSON.parse(cached);
-          if (json && typeof json === 'object') {
-            record = { roomId: rid, scoresByName: json.scoresByName || {} };
-          }
-        }
-      } catch {}
-
-      if (!record) {
-        const remote = await githubReadRecord(rid);
-        if (remote && typeof remote === 'object') record = remote;
-      }
-
-      if (!record || !record.scoresByName || typeof record.scoresByName !== 'object') return;
-
-      const scores = { ...(record.scoresByName || {}) };
-      if (!(prev in scores)) return;
-
-      const prevScore = Number(scores[prev] || 0);
-      if (next in scores) {
-        scores[next] = Number(scores[next] || 0) + prevScore;
-      } else {
-        scores[next] = prevScore;
-      }
-      delete scores[prev];
-
-      record.roomId = rid;
-      record.updatedAt = new Date().toISOString();
-      record.scoresByName = scores;
-
-      if (persistState.enabled && persistState.roomId === rid) {
-        persistState.scoresByName = scores;
-      }
-
-      try {
-        localStorage.setItem(persistKey(rid, 'record'), JSON.stringify({ scoresByName: scores }));
-        dlog(`Persist(Local): renamed ${prev} -> ${next} for ${rid}`);
-      } catch (e) {
-        dlog(`Persist(Local): rename cache write failed for ${rid}: ${e?.message || e}`);
-      }
-
-      await workerWriteRecord(rid, record);
-    }
-    
     function setRoleBadges() {
       const role = !peer ? '未連線' : (isHost ? '房主' : '玩家');
-      const role = isServerMode()
-        ? (!serverSocket || serverSocket.readyState !== WebSocket.OPEN ? '未連線' : (isHost ? '房主' : '玩家'))
-        : (!peer ? '未連線' : (isHost ? '房主' : '玩家'));
       $('roleBadge').textContent = role;
       $('gameRoleBadge').textContent = role;
 
-      const hostReady = isServerMode() ? !!(isHost && myId) : !!(isHost && peer && myId);
-
+      const hostReady = !!(isHost && peer && myId);
 
       // Lobby buttons
       $('btnApplyRounds').classList.toggle('hidden', !hostReady);
@@ -3594,11 +3486,6 @@ function eval3NoJoker(cards) {
         try { peer.destroy(); } catch {}
       }
       peer = null;
-      if (serverSocket) {
-        try { serverSocket.close(); } catch {}
-      }
-      serverSocket = null;
-      serverConns.clear();
       isHost = false;
       hostId = null;
       myId = null;
@@ -4801,8 +4688,7 @@ function eval3NoJoker(cards) {
 
     function startGame() {
       if (!isHost) return;
-      if (!myId) return; 
-      if (!isServerMode() && !peer) return;
+      if (!peer || !myId) return;
       if (Object.keys(hostState.players).length < 1) {
         toast('至少需要 2 人（含房主）才能開始');
         return;
@@ -6822,138 +6708,6 @@ function revealRound() {
 
     // -------------------- Connect flows --------------------
     let clientConn = null; // persistent connection from client -> host
-     async function finalizeHostStart(roomKey) {
-      const rid = String(roomKey || '').trim().toUpperCase();
-      if (isPersistRoomId(rid)) {
-        await maybeLoadPersistRecordForHost(rid);
-      } else {
-        persistState.enabled = false;
-        persistState.roomId = '';
-      }
-
-      if (!persistState.enabled) {
-        hostState.cumulative = {};
-      } else {
-        try { applyPersistScoreForPeer(hostId, clientState.myName); } catch {}
-      }
-      clientState.cumulative = hostState.cumulative;
-
-      broadcastPlayers();
-      renderPlayers();
-      setRoleBadges();
-      hostApplyRounds();
-      updateMyCumulative();
-      setBadge(true, '房間已建立');
-      log('房間已建立，等待玩家加入');
-      try { showPage('game'); renderTableSeats(); } catch {}
-    }
-
-    function handleServerMessage(msg) {
-      if (!msg || typeof msg !== 'object') return;
-
-      if (msg.t === 'hosted') {
-        myId = msg.id;
-        hostId = msg.hostId;
-        clientState.roomId = msg.roomId;
-        $('myPeerId').textContent = msg.roomId || '—';
-        setRoleBadges();
-        finalizeHostStart(msg.roomId).catch(() => {});
-        return;
-      }
-
-      if (msg.t === 'joined') {
-        myId = msg.id;
-        hostId = msg.hostId;
-        clientState.roomId = msg.roomId;
-        $('myPeerId').textContent = msg.roomId || '—';
-        const conn = makeVirtualConn(hostId, (payload) => {
-          serverSend({ t: 'relay', to: hostId, payload });
-        });
-        clientConn = conn;
-        wireConn(conn, false);
-        conn.__emit('open');
-        return;
-      }
-
-      if (msg.t === 'client-joined') {
-        const pid = msg.id;
-        if (!pid) return;
-        if (serverConns.has(pid)) return;
-        const conn = makeVirtualConn(pid, (payload) => {
-          serverSend({ t: 'relay', to: pid, payload });
-        });
-        serverConns.set(pid, conn);
-        wireConn(conn, true);
-        conn.__emit('open');
-        return;
-      }
-
-      if (msg.t === 'client-left') {
-        const conn = serverConns.get(msg.id);
-        if (conn) {
-          conn.__emit('close');
-          serverConns.delete(msg.id);
-        }
-        return;
-      }
-
-      if (msg.t === 'host-left') {
-        toast('房主已離開');
-        resetAll();
-        showPage('lobby');
-        return;
-      }
-
-      if (msg.t === 'relay') {
-        if (isHost) {
-          const conn = serverConns.get(msg.fromId);
-          if (conn) conn.__emit('data', msg.payload);
-          return;
-        }
-        if (clientConn) clientConn.__emit('data', msg.payload);
-        return;
-      }
-
-      if (msg.t === 'error') {
-        toast(msg.message || '伺服器錯誤');
-      }
-    }
-
-    function connectServerSocket(onOpen) {
-      const url = serverModeUrl();
-      if (!url) {
-        toast('未設定伺服器網址（localStorage ninePokerServerUrl 或 URL ?server=）');
-        return null;
-      }
-      if (serverSocket) {
-        try { serverSocket.close(); } catch {}
-      }
-      serverSocket = new WebSocket(url);
-      serverSocket.addEventListener('open', () => {
-        setBadge(false, '連線中…');
-        onOpen?.();
-      });
-      serverSocket.addEventListener('message', (ev) => {
-        try { handleServerMessage(JSON.parse(ev.data)); } catch {}
-      });
-      serverSocket.addEventListener('close', () => {
-        if (isHost) {
-          toast('伺服器連線已中斷');
-        } else if (clientState.connected || clientState.joining) {
-          toast('與伺服器斷線，請稍後重試');
-        }
-        setBadge(false, '已斷線');
-        clientState.connected = false;
-        clientState.joining = false;
-        stopClientHeartbeat();
-        setRoleBadges();
-      });
-      serverSocket.addEventListener('error', () => {
-        setBadge(false, '連線失敗');
-        toast('伺服器連線失敗');
-      });
-      return serverSocket;
-    }
 
     function becomeHost() {
       ensureName();
@@ -6968,28 +6722,43 @@ function revealRound() {
       }
 
       setBadge(false, '建立中…');
-      if (isServerMode()) {
-        serverConns.clear();
-        connectServerSocket(() => {
-          serverSend({ t: 'create-room', roomId: custom || 'MON', name: clientState.myName });
-        });
-      } else {
-        createPeerIfNeeded(custom || null);
-      }
+      createPeerIfNeeded(custom || null);
       setRoleBadges();
       log(custom ? `正在建立房間：${custom} …` : '正在建立房間…');
 
       const intv = setInterval(async () => {
-        if (isServerMode()) {
-          if (!myId) return;
-          clearInterval(intv);
-          return;
-        }
         if (myId) {
           clearInterval(intv);
 
           // Init seat order and persisted record (DAY/NIG)
-          await finalizeHostStart(myId);
+          try {
+            const rid = String(myId||'').trim().toUpperCase();
+            if (isPersistRoomId(rid)) {
+              await maybeLoadPersistRecordForHost(rid);
+            } else {
+              persistState.enabled = false;
+              persistState.roomId = '';
+            }
+          } catch {}
+
+          // If we loaded persisted scores for host, keep it; otherwise reset.
+          if (!persistState.enabled) {
+            hostState.cumulative = {};
+          } else {
+            // ensure host cumulative exists
+            try { applyPersistScoreForPeer(hostId, clientState.myName); } catch {}
+          }
+          clientState.cumulative = hostState.cumulative;
+
+          broadcastPlayers();
+          renderPlayers();
+          setRoleBadges();
+          hostApplyRounds();
+          updateMyCumulative();
+          setBadge(true, '房間已建立');
+          log('房間已建立，等待玩家加入');
+          // show table immediately (waiting room)
+          try { showPage('game'); renderTableSeats(); } catch {}
         }
       }, 80);
     }
@@ -7026,29 +6795,21 @@ function revealRound() {
       myId = null;
 
       isHost = false;
-      hostId = isServerMode() ? null : rid;
+      hostId = rid;
       clientState.roomId = rid;
       clientState.players = {};
       clientState.connected = false;
       clientState.joining = true;
       setBadge(false, '連線中…');
 
-      if (isServerMode()) {
-        connectServerSocket(() => {
-          serverSend({ t: 'join-room', roomId: rid, name: clientState.myName });
-        });
-      } else {
-        createPeerIfNeeded();
-      }
-
+      createPeerIfNeeded();
       setRoleBadges();
       renderPlayers();
       log(`正在加入房間：${rid} … (${JSON.stringify(rid)})`);
 
       const startedAt = Date.now();
       const waitPeer = setInterval(() => {
-        if (!myId) return; 
-        if (!isServerMode() && !peer) return;
+        if (!(peer && myId)) return;
         clearInterval(waitPeer);
 
         let attempts = 0;
@@ -7109,13 +6870,8 @@ function revealRound() {
     }
 
     // -------------------- Event bindings --------------------
-    $('btnSaveName').addEventListener('click', async () => {
-      const prevName = clientState.myName;
+    $('btnSaveName').addEventListener('click', () => {
       ensureName();
-      const nextName = clientState.myName;
-      try {
-        await renamePersistNameInRecord('MON', prevName, nextName);
-      } catch {}
       toast('已儲存暱稱');
       renderPlayers();
     });
@@ -7136,7 +6892,7 @@ function revealRound() {
         $('inpCustomRoomId').value = v;
       } catch {}
 
-      if (peer || serverSocket) resetAll();
+      if (peer) resetAll();
       becomeHost();
     });
 
@@ -7156,7 +6912,7 @@ function revealRound() {
         rid = 'MON';
       }
       
-      if (peer || serverSocket) resetAll();
+      if (peer) resetAll();
       joinRoom(rid);
     });
 
@@ -7172,8 +6928,8 @@ function revealRound() {
     });
 
     $('btnCopyLink').addEventListener('click', async () => {
-      const rid = isHost ? (isServerMode() ? clientState.roomId : myId) : clientState.roomId;
-      if (!rid) return toast(isHost ? '請先建立房間（取得房間號）' : '尚未取得房間號');
+      const rid = isHost ? myId : clientState.roomId;
+      if (!rid) return toast(isHost ? '請先建立房間（取得 Peer ID）' : '尚未取得房間號');
       try {
         const link = updateShareLink(rid);
         await navigator.clipboard.writeText(link);
