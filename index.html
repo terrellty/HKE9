@@ -3285,6 +3285,7 @@ function eval3NoJoker(cards) {
     // ---- Keepalive / Reconnect (best effort; iOS may still suspend background tabs) ----
     const HEARTBEAT_MS = 8000;
     const HEARTBEAT_TIMEOUT_MS = 30000;
+    const HOST_HEARTBEAT_ENABLED = false;
     const CLIENT_HEARTBEAT_ENABLED = false;
     let hostHeartbeatTimer = null;
     let clientHeartbeatTimer = null;
@@ -3292,6 +3293,7 @@ function eval3NoJoker(cards) {
     let clientReconnectAttempts = 0;
 
     function startHostHeartbeat() {
+      if (!HOST_HEARTBEAT_ENABLED) return;
       if (hostHeartbeatTimer) return;
       hostHeartbeatTimer = setInterval(() => {
         if (!isHost) return;
