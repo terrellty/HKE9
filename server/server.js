@@ -247,6 +247,17 @@ wss.on('connection', (ws) => {
       const room = rooms.get(roomId);
       if (!room) return;
 
+      if (to === '*') {
+        for (const [id, client] of room.clients.entries()) {
+          if (id === ws.id) continue;
+          send(client.socket, { t: 'relay', fromId: ws.id, payload });
+        }
+        if (ws.role !== 'host' && room.hostSocket && room.hostSocket.readyState === ws.OPEN) {
+          send(room.hostSocket, { t: 'relay', fromId: ws.id, payload });
+        }
+        return;
+      }
+
       if (ws.role === 'host') {
         if (!to) return;
         const target = room.clients.get(to);

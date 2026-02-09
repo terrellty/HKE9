@@ -2007,11 +2007,13 @@
       spawnDanmaku({kind:'text', text: t}, myName);
 
       // send to network
-      const payload = {t:'chat', kind:'text', from: myName, fromId: (isHost ? hostId : myId), text: t};
-      if (isHost) {
-        broadcast(payload);
-      } else {
-        send(clientConn, payload);
+      const payload = {t:'chat', kind:'text', from: myName, fromId: (isHost ? hostId : myId), text: t, _broadcast: true};
+      if (!relayBroadcast(payload)) {
+        if (isHost) {
+          broadcast(payload);
+        } else {
+          send(clientConn, payload);
+        }
       }
     }
 
@@ -2033,11 +2035,13 @@
       // danmaku
       spawnDanmaku({kind:'sticker', url: u}, myName);
 
-      const payload = {t:'chat', kind:'sticker', from: myName, fromId: (isHost ? hostId : myId), url: u};
-      if (isHost) {
-        broadcast(payload);
-      } else {
-        send(clientConn, payload);
+      const payload = {t:'chat', kind:'sticker', from: myName, fromId: (isHost ? hostId : myId), url: u, _broadcast: true};
+      if (!relayBroadcast(payload)) {
+        if (isHost) {
+          broadcast(payload);
+        } else {
+          send(clientConn, payload);
+        }
       }
     }
 
@@ -2254,10 +2258,13 @@
       spawnDanmaku({kind:'text', text: t}, myName);
 
       // send to network
-      if (isHost) {
-        broadcast({t:'danmaku', kind:'text', from: myName, fromId: hostId, text: t});
-      } else {
-        send(clientConn, {t:'danmaku', kind:'text', from: myName, fromId: myId, text: t});
+      const payload = {t:'danmaku', kind:'text', from: myName, fromId: (isHost ? hostId : myId), text: t, _broadcast: true};
+      if (!relayBroadcast(payload)) {
+        if (isHost) {
+          broadcast(payload);
+        } else {
+          send(clientConn, payload);
+        }
       }
     }
 
@@ -2347,10 +2354,13 @@
       spawnPoopThrow(fromId, tid);
 
       // send to network
-      if (isHost) {
-        broadcast({t:'poop', from: fromName, fromId, targetId: tid});
-      } else {
-        send(clientConn, {t:'poop', from: fromName, fromId, targetId: tid});
+      const payload = {t:'poop', from: fromName, fromId, targetId: tid, _broadcast: true};
+      if (!relayBroadcast(payload)) {
+        if (isHost) {
+          broadcast(payload);
+        } else {
+          send(clientConn, payload);
+        }
       }
     }
 
@@ -4173,9 +4183,25 @@ function eval3NoJoker(cards) {
       conn.send({ ...obj, _ts: Date.now() });
     }
 
+    function relayBroadcast(obj) {
+      if (!relaySocketOpen()) return false;
+      try {
+        relaySocket.send(JSON.stringify({ t: 'relay', to: '*', payload: { ...obj, _ts: Date.now() } }));
+        return true;
+      } catch {}
+      return false;
+    }
+
     function broadcast(obj) {
+      const payload = { ...obj, _ts: Date.now() };
+      if (relaySocketOpen()) {
+        try {
+          relaySocket.send(JSON.stringify({ t: 'relay', to: '*', payload }));
+          return;
+        } catch {}
+      }
       for (const pid in hostState.players) {
-        try { hostState.players[pid].conn.send({ ...obj, _ts: Date.now() }); } catch {}
+        try { hostState.players[pid].conn.send(payload); } catch {}
       }
     }
 
@@ -4518,7 +4544,9 @@ function eval3NoJoker(cards) {
         const url = kind === 'sticker' ? String(msg.url||'').slice(0,500) : '';
 
         // broadcast to all (including sender)
-        broadcast({t:'chat', kind, from: fromName, fromId, text, url});
+        if (!msg._broadcast) {
+          broadcast({t:'chat', kind, from: fromName, fromId, text, url, _broadcast: true});
+        }
 
         // local: keep chat record + danmaku for everything
         if (kind === 'sticker' && url) {
@@ -4539,7 +4567,9 @@ function eval3NoJoker(cards) {
         const url = kind === 'sticker' ? String(msg.url||'').slice(0,500) : '';
 
         // broadcast to all (including sender)
-        broadcast({t:'danmaku', kind, from: fromName, fromId, text, url});
+        if (!msg._broadcast) {
+          broadcast({t:'danmaku', kind, from: fromName, fromId, text, url, _broadcast: true});
+        }
 
         // show on host immediately
         if (kind === 'sticker' && url) spawnDanmaku({kind:'sticker', url}, fromName);
@@ -4553,7 +4583,9 @@ function eval3NoJoker(cards) {
         const targetId = String(msg.targetId || '');
         if (!targetId) return;
         // broadcast to all (including sender)
-        broadcast({t:'poop', from: fromName, fromId, targetId});
+        if (!msg._broadcast) {
+          broadcast({t:'poop', from: fromName, fromId, targetId, _broadcast: true});
+        }
         // show on host immediately (throw)
         spawnPoopThrow(fromId, targetId);
         return;
