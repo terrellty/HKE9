@@ -3158,6 +3158,7 @@ function eval3NoJoker(cards) {
             }
           }
           relayConnections.clear();
+          scheduleHostReconnect('relay-close');
         } else if (clientConn) {
           try { clientConn.close(); } catch {}
         }
@@ -3169,6 +3170,9 @@ function eval3NoJoker(cards) {
       relaySocket.addEventListener('error', () => {
         relayConnecting = false;
         setBadge(false, '連線錯誤');
+        if (isHost && hostRoomId) {
+          scheduleHostReconnect('relay-error');
+        }
       });
     }
 
@@ -3290,9 +3294,11 @@ function eval3NoJoker(cards) {
     const HEARTBEAT_MS = 8000;
     const HEARTBEAT_TIMEOUT_MS = 30000;
     const HOST_HEARTBEAT_ENABLED = false;
-    const CLIENT_HEARTBEAT_ENABLED = false;
+    const CLIENT_HEARTBEAT_ENABLED = true;
     let hostHeartbeatTimer = null;
     let clientHeartbeatTimer = null;
+    let hostReconnectTimer = null;
+    let hostReconnectAttempts = 0;
     let clientReconnectTimer = null;
     let clientReconnectAttempts = 0;
 
@@ -3412,11 +3418,55 @@ function eval3NoJoker(cards) {
       }, 500);
     }
 
+    function scheduleHostReconnect(reason='') {
+      if (!isHost) return;
+      if (!hostRoomId) return;
+      if (document.hidden) return; // wait until visible
+      if (hostReconnectTimer) return;
+      hostReconnectAttempts = 0;
+
+      const run = () => {
+        if (!isHost) return;
+        if (!hostRoomId) return;
+        if (relaySocketOpen()) { hostReconnectTimer = null; return; }
+
+        hostReconnectAttempts += 1;
+        const max = 6;
+        setBadge(false, `房主重連中…（${hostReconnectAttempts}/${max}）`);
+
+        tryRelayReconnect();
+
+        connectRelay({ type: 'host', roomId: hostRoomId });
+
+        if (hostReconnectAttempts >= max) {
+          hostReconnectTimer = null;
+          toast('房主重連多次失敗，請手動重開房間');
+          setBadge(false, '斷線');
+          return;
+        }
+
+        hostReconnectTimer = setTimeout(() => {
+          hostReconnectTimer = null;
+          run();
+        }, 2000 + hostReconnectAttempts * 500);
+      };
+
+      hostReconnectTimer = setTimeout(() => {
+        hostReconnectTimer = null;
+        run();
+      }, 500);
+    }
+
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) return;
       tryRelayReconnect();
-      if (!isHost && !clientState.connected && clientState.roomId) {
-        scheduleClientReconnect('resume');
+      if (isHost && hostRoomId && !relaySocketOpen()) {
+        scheduleHostReconnect('resume');
+      }
+      if (!isHost && clientState.roomId) {
+        if (!clientState.connected || !relaySocketOpen()) {
+          scheduleClientReconnect('resume');
+        }
       }
     });
 
@@ -3705,6 +3755,13 @@ function eval3NoJoker(cards) {
         }
       } catch {}
       clientReconnectAttempts = 0;
+      try {
+        if (hostReconnectTimer) {
+          clearTimeout(hostReconnectTimer);
+          hostReconnectTimer = null;
+        }
+      } catch {}
+      hostReconnectAttempts = 0;
       try { stopArrangeTimer(); } catch {}
 
       closeRelaySocket();
