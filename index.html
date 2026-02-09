@@ -3482,7 +3482,7 @@ function eval3NoJoker(cards) {
     //   localStorage.setItem('ninePokerPersistWorkerUrl', 'https://<your-worker>.workers.dev'); // legacy key
     // Optional shared secret (if your worker checks it):
     //   localStorage.setItem('ninePokerPersistSecret', '...');
-    const DEFAULT_PERSIST_API_URL = 'https://record.hke9.workers.dev';
+    const DEFAULT_PERSIST_API_URL = DEFAULT_RELAY_URL;
 
     const persistState = {
       enabled: false,
