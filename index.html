@@ -3459,10 +3459,11 @@ function eval3NoJoker(cards) {
       waitingForHost: false,
     };
 
-    // -------------------- Persisted room record (DAY/NIG) via GitHub repo + Cloudflare Worker --------------------
+    // -------------------- Persisted room record (DAY/NIG) via GitHub repo + Cloudflare Worker or Node server --------------------
     // Goal: DAY/NIG rooms share a persistent scoreboard across devices.
     // Read: public JSON from GitHub repo (raw.githubusercontent.com)
-    // Write: Cloudflare Worker (free) that holds a GitHub token and commits back to the repo.
+    // Write: Cloudflare Worker (free) that holds a GitHub token and commits back to the repo,
+    //        or a Node relay server endpoint (/persist/save).
     // Fallback: always cache to localStorage so the host device can recover even if worker fails.
 
     const PERSIST_ROOM_IDS = new Set(['DAY','MON']);
@@ -3475,12 +3476,13 @@ function eval3NoJoker(cards) {
       dir: 'records',
     };
 
-    // Cloudflare Worker endpoint (you will deploy this). Leave empty to disable cloud write.
+    // Persist API base (worker or Node relay server). Leave empty to disable cloud write.
     // You can also override at runtime via localStorage:
-    //   localStorage.setItem('ninePokerPersistWorkerUrl', 'https://<your-worker>.workers.dev');
+    //   localStorage.setItem('ninePokerPersistApiUrl', 'https://<your-relay-host>');
+    //   localStorage.setItem('ninePokerPersistWorkerUrl', 'https://<your-worker>.workers.dev'); // legacy key
     // Optional shared secret (if your worker checks it):
     //   localStorage.setItem('ninePokerPersistSecret', '...');
-    const DEFAULT_PERSIST_WORKER_URL = 'https://record.hke9.workers.dev';
+    const DEFAULT_PERSIST_API_URL = 'https://record.hke9.workers.dev';
 
     const persistState = {
       enabled: false,
@@ -3499,12 +3501,12 @@ function eval3NoJoker(cards) {
       return `ninePokerPersist_${String(roomId||'').toUpperCase()}_${k}`;
     }
 
-    function persistWorkerUrl() {
+    function persistApiBaseUrl() {
       try {
-        const v = localStorage.getItem('ninePokerPersistWorkerUrl');
-        return (v && String(v).trim()) ? String(v).trim().replace(/\/+$/,'') : DEFAULT_PERSIST_WORKER_URL;
+        const v = localStorage.getItem('ninePokerPersistApiUrl') || localStorage.getItem('ninePokerPersistWorkerUrl');
+        return (v && String(v).trim()) ? String(v).trim().replace(/\/+$/,'') : DEFAULT_PERSIST_API_URL;
       } catch {
-        return DEFAULT_PERSIST_WORKER_URL;
+        return DEFAULT_PERSIST_API_URL;
       }
     }
 
@@ -3540,16 +3542,50 @@ function eval3NoJoker(cards) {
       }
     }
 
+    function persistSaveUrl() {
+      const base = persistApiBaseUrl();
+      if (!base) return '';
+      if (base.endsWith('/save')) return base;
+      if (base.endsWith('/persist')) return `${base}/save`;
+      return `${base}/persist/save`;
+    }
+
+    function persistReadUrl(roomId) {
+      const base = persistApiBaseUrl();
+      if (!base) return '';
+      const rid = encodeURIComponent(String(roomId||'').trim().toUpperCase());
+      if (base.endsWith('/persist')) return `${base}/record?roomId=${rid}`;
+      if (base.includes('/persist/')) return `${base}/record?roomId=${rid}`;
+      return `${base}/persist/record?roomId=${rid}`;
+    }
+
+    async function apiReadRecord(roomId) {
+      const url = persistReadUrl(roomId);
+      if (!url) return null;
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.status === 404) return null;
+        if (!res.ok) {
+          const txt = await res.text().catch(()=> '');
+          dlog(`Persist(API): read failed (${res.status}) ${roomId}: ${txt.slice(0,140)}`);
+          return null;
+        }
+        return await res.json();
+      } catch (e) {
+        dlog(`Persist(API): read error ${roomId}: ${e?.message || e}`);
+        return null;
+      }
+    }
+
     async function workerWriteRecord(roomId, record) {
-      const base = persistWorkerUrl();
-      if (!base) {
-        dlog('Persist(Worker): worker URL not set (localStorage ninePokerPersistWorkerUrl). Saved locally only.');
+      const url = persistSaveUrl();
+      if (!url) {
+        dlog('Persist(API): persist URL not set (localStorage ninePokerPersistApiUrl). Saved locally only.');
         return false;
       }
       const secret = persistWorkerSecret();
-      const url = base + '/save';
       try {
-        dlog(`Persist(Worker): POST ${url} room=${String(roomId||'').trim().toUpperCase()}`);
+        dlog(`Persist(API): POST ${url} room=${String(roomId||'').trim().toUpperCase()}`);
       } catch {}
       try {
         const res = await fetch(url, {
@@ -3562,13 +3598,13 @@ function eval3NoJoker(cards) {
         });
         const txt = await res.text().catch(()=> '');
         if (!res.ok) {
-          dlog(`Persist(Worker): save failed (${res.status}) ${roomId}: ${txt.slice(0,160)}`);
+          dlog(`Persist(API): save failed (${res.status}) ${roomId}: ${txt.slice(0,160)}`);
           return false;
         }
-        dlog(`Persist(Worker): save OK ${roomId}`);
+        dlog(`Persist(API): save OK ${roomId}`);
         return true;
       } catch (e) {
-        dlog(`Persist(Worker): save error ${roomId}: ${e?.message || e}`);
+        dlog(`Persist(API): save error ${roomId}: ${e?.message || e}`);
         return false;
       }
     }
@@ -3614,7 +3650,7 @@ function eval3NoJoker(cards) {
       if (!isPersistRoomId(rid)) return;
       persistState.enabled = true;
       persistState.roomId = rid;
-      try { dlog(`Persist: enabled for ${rid} | worker=${persistWorkerUrl()}`); } catch {}
+      try { dlog(`Persist: enabled for ${rid} | api=${persistApiBaseUrl()}`); } catch {}
 
       // 1) local cache first
       try {
@@ -3628,14 +3664,22 @@ function eval3NoJoker(cards) {
         }
       } catch {}
 
-      // 2) GitHub raw (public)
-      const remote = await githubReadRecord(rid);
-      if (remote && typeof remote === 'object') {
-        persistState.scoresByName = remote.scoresByName || persistState.scoresByName || {};
+      // 2) Persist API (worker or Node server)
+      const apiRemote = await apiReadRecord(rid);
+      if (apiRemote && typeof apiRemote === 'object') {
+        persistState.scoresByName = apiRemote.scoresByName || persistState.scoresByName || {};
         try { localStorage.setItem(persistKey(rid,'record'), JSON.stringify({scoresByName: persistState.scoresByName})); } catch {}
-        dlog(`Persist(GH): loaded GitHub record for ${rid}`);
+        dlog(`Persist(API): loaded record for ${rid}`);
       } else {
-        dlog(`Persist(GH): no GitHub record found for ${rid} (expected /${PERSIST_REPO.dir}/${rid}.json)`);
+        // 3) GitHub raw (public)
+        const remote = await githubReadRecord(rid);
+        if (remote && typeof remote === 'object') {
+          persistState.scoresByName = remote.scoresByName || persistState.scoresByName || {};
+          try { localStorage.setItem(persistKey(rid,'record'), JSON.stringify({scoresByName: persistState.scoresByName})); } catch {}
+          dlog(`Persist(GH): loaded GitHub record for ${rid}`);
+        } else {
+          dlog(`Persist(GH): no GitHub record found for ${rid} (expected /${PERSIST_REPO.dir}/${rid}.json)`);
+        }
       }
 
       // Apply score to host now
