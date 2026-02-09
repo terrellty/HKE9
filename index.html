@@ -3808,8 +3808,12 @@ function eval3NoJoker(cards) {
       const next = String(nextName || '').trim();
       if (!next) return;
       const scores = { ...(record.scoresByName || {}) };
-      if (prev && prev !== next && scores[prev] !== undefined) {
-        scores[next] = Number(scores[prev] || 0);
+      if (prev && prev !== next) {
+        if (scores[prev] !== undefined) {
+          scores[next] = Number(scores[prev] || 0);
+        } else if (scores[next] === undefined) {
+          scores[next] = 0;
+        }
         delete scores[prev];
       } else if (scores[next] === undefined) {
         scores[next] = 0;
