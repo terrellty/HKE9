@@ -3675,6 +3675,28 @@ function eval3NoJoker(cards) {
       persistState.scoresByName = map;
     }
 
+    function isNameActive(name) {
+      const nm = String(name || '').trim();
+      if (!nm) return false;
+      if (String(clientState.myName || '').trim() === nm) return true;
+      for (const pid in (hostState.players || {})) {
+        if (String(hostState.players[pid]?.name || '').trim() === nm) return true;
+      }
+      return false;
+    }
+
+    function applyPersistNameChange(oldName, newName, score) {
+      if (!persistState.enabled) return;
+      const prev = String(oldName || '').trim();
+      const next = String(newName || '').trim();
+      if (!next) return;
+      persistState.scoresByName = persistState.scoresByName || {};
+      persistState.scoresByName[next] = Number(score || 0);
+      if (prev && prev !== next && !isNameActive(prev)) {
+        delete persistState.scoresByName[prev];
+      }
+    }
+
     function buildPersistRecordPayload() {
       const roomId = persistState.roomId;
       const now = new Date().toISOString();
@@ -4415,6 +4437,27 @@ function eval3NoJoker(cards) {
 
         // start heartbeat as soon as we have at least one player
         startHostHeartbeat();
+        return;
+      }
+
+      if (msg.t === 'rename') {
+        const pid = conn.peer;
+        const next = String(msg.name || '玩家').slice(0, 20).trim() || '玩家';
+        const player = hostState.players[pid];
+        if (!player) return;
+        const prev = player.name;
+        if (prev === next) return;
+        player.name = next;
+        try {
+          if (persistState.enabled) {
+            applyPersistNameChange(prev, next, hostState.cumulative[pid] || 0);
+            maybeSavePersistRecordAfterRound();
+          }
+        } catch {}
+        broadcastPlayers();
+        renderPlayers();
+        try { renderTableSeats(); } catch {}
+        log(`玩家改名：${prev} -> ${next}`);
         return;
       }
 
@@ -7318,7 +7361,23 @@ function revealRound() {
 
     // -------------------- Event bindings --------------------
     $('btnSaveName').addEventListener('click', () => {
+      const prevName = clientState.myName;
       ensureName();
+      const nextName = clientState.myName;
+      if (prevName !== nextName) {
+        if (isHost) {
+          try {
+            if (persistState.enabled) {
+              applyPersistNameChange(prevName, nextName, hostState.cumulative[hostId] || 0);
+              maybeSavePersistRecordAfterRound();
+            }
+          } catch {}
+          broadcastPlayers();
+          try { renderTableSeats(); } catch {}
+        } else if (clientConn && clientState.connected) {
+          try { send(clientConn, { t: 'rename', name: nextName }); } catch {}
+        }
+      }
       toast('已儲存暱稱');
       renderPlayers();
     });
