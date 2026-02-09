@@ -3,6 +3,7 @@ const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
+const { computeRoundResult } = require('./score');
 
 const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 
@@ -135,6 +136,52 @@ const server = http.createServer(async (req, res) => {
     }
 
     sendJson(res, 404, { error: 'Not found' });
+    return;
+  }
+
+  if (pathname === '/score') {
+    setCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    let bodyText;
+    try {
+      bodyText = await readRequestBody(req);
+    } catch (error) {
+      sendJson(res, 413, { error: error.message });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(bodyText);
+    } catch {
+      sendJson(res, 400, { error: 'Bad JSON' });
+      return;
+    }
+
+    const submissions = payload?.submissions;
+    if (!submissions || typeof submissions !== 'object') {
+      sendJson(res, 400, { error: 'Invalid submissions' });
+      return;
+    }
+
+    try {
+      const { dealerId, results } = computeRoundResult({
+        submissions,
+        dealerOverride: payload?.dealerOverride || null,
+      });
+      sendJson(res, 200, { dealerId, results });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || 'Failed to compute score' });
+    }
     return;
   }
 

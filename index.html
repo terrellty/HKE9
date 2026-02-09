@@ -3114,6 +3114,14 @@ function eval3NoJoker(cards) {
       return base.replace(/^http/i, 'ws');
     }
 
+    function relayHttpUrl() {
+      const base = relayBaseUrl();
+      if (!base) return '';
+      if (base.startsWith('ws://')) return base.replace(/^ws:/i, 'http:');
+      if (base.startsWith('wss://')) return base.replace(/^wss:/i, 'https:');
+      return base;
+    }
+
     function relaySocketOpen() {
       return relaySocket && relaySocket.readyState === WebSocket.OPEN;
     }
@@ -5375,7 +5383,7 @@ function eval3NoJoker(cards) {
       return bestId;
     }
 
-function revealRound() {
+async function revealRound() {
       if (!isHost) return;
       if (hostState.revealed) return;
       // Ensure table reveal is visible for host (avoid being hidden under status modal)
@@ -5396,399 +5404,40 @@ function revealRound() {
         return;
       }
 
-      // Precompute eval + report validation for every player
-      const evalMap = {};
-      const reportMap = {};
-      const foulMap = {}; // id -> {foul,msg}
-
-      for (const id of ids) {
-        const sub = hostState.submissions[id];
-        const se = { head: eval2(sub.head), mid: eval3(sub.mid), tail: eval3(sub.tail) };
-        evalMap[id] = se;
-        const all9 = [sub.dealerCard, ...sub.head, ...sub.mid, ...sub.tail];
-        const sp = validateSpecial(sub.report, all9, sub, se);
-        reportMap[id] = sp;
-        foulMap[id] = detectFoul(sub.head, sub.mid, sub.tail);
+      let scoreData = null;
+      try {
+        const baseUrl = relayHttpUrl();
+        if (!baseUrl) {
+          toast('Relay 伺服器網址未設定');
+          return;
+        }
+        const res = await fetch(`${baseUrl}/score`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            submissions: hostState.submissions,
+            dealerOverride: hostState.dealerOverride || null,
+          }),
+        });
+        if (!res.ok) {
+          const msg = await res.text().catch(() => '');
+          toast(`伺服器結算失敗：${msg || res.status}`);
+          return;
+        }
+        scoreData = await res.json();
+      } catch (error) {
+        toast(`伺服器結算失敗：${error?.message || '無法連線'}`);
+        return;
       }
 
-      // 擺烏龍判定修正：若報到有效，則無視排牌大小（不計為擺烏龍）
-      const wulongSet = new Set();
-      for (const id of ids) {
-        const sub = hostState.submissions[id];
-        const reportCode = sub.report || 'none';
-        const sp = reportMap[id] || {ok:true, bonus:0};
-        
-        // 是否為有效報到
-        const isReportValid = (reportCode !== 'none' && sp.ok && sp.bonus > 0);
-
-        // 只有在「沒有有效報到」的情況下，才檢查頭中尾大小是否烏龍
-        if (!isReportValid && foulMap[id]?.foul) {
-            wulongSet.add(id);
-        }
-        // 報到但牌型不符 -> 視為擺烏龍
-        if (reportCode !== 'none' && !isReportValid) {
-            wulongSet.add(id);
-        }
-      }
-
-      // 決定莊家：照常用結算前指定或比選莊牌
-      let dealerId = hostState.dealerOverride || computeDealerIdFromSubmissions();
+      const dealerId = scoreData?.dealerId;
+      const results = scoreData?.results || {};
       hostState.dealerOverride = null;
       if (!dealerId) {
         toast('無法決定莊家（資料不足）');
         return;
       }
       hostState.dealerId = dealerId;
-
-      const dealerSub = hostState.submissions[dealerId];
-      const dealerEval = evalMap[dealerId];
-      // 閒家報到成功優先於莊家報到成功
-      let hasNonDealerReportOk = false;
-      for (const id of ids) {
-        if (id === dealerId) continue;
-        const sub = hostState.submissions[id];
-        const reportCode = sub.report || 'none';
-        const sp = reportMap[id] || {ok:true, bonus:0};
-        if (reportCode !== 'none' && sp.ok && sp.bonus > 0) {
-          hasNonDealerReportOk = true;
-          break;
-        }
-      }
-
-      const dealerReportCode = dealerSub?.report || 'none';
-      const dealerReport = reportMap[dealerId] || {ok:false, bonus:0};
-      const dealerReportOk = dealerReportCode !== 'none' && dealerReport.ok && dealerReport.bonus > 0;
-
-      // 分支：莊家報到有效（本局不比三墩）
-      // 修正：只要莊家報到有效就執行，不再檢查 wulongSet.size === 0（因有效報到者已從 wulongSet 排除）
-      if (dealerReportOk) {
-        const bonus = dealerReport.bonus;
-        // 1) 只有莊家報到
-        if (!hasNonDealerReportOk) {
-          const results = {};
-          for (const id of ids) {
-            const sub = hostState.submissions[id];
-            const se = evalMap[id];
-            const isDealer = id === dealerId;
-            results[id] = {
-              total: isDealer ? (bonus * (ids.length - 1)) : -bonus,
-              note: isDealer ? `莊家報到+${bonus}×${ids.length - 1}（本局只計報到）` : `被莊家報到-${bonus}`,
-              per: {head:0, mid:0, tail:0},
-              report: sub.report || 'none',
-              evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
-              dealerCard: sub.dealerCard,
-            };
-          }
-
-          for (const id of ids) {
-            hostState.cumulative[id] = Number(hostState.cumulative[id] || 0) + Number(results[id]?.total || 0);
-          }
-
-          const payload = {
-            t:'reveal',
-            round: hostState.round,
-            dealerId,
-            results,
-            submissions: sanitizeSubsForBroadcast(),
-            players: allPlayersForBroadcast(),
-            cumulative: hostState.cumulative,
-          };
-
-          hostState.revealed = true;
-          broadcast(payload);
-
-          clientState.lastReveal = payload;
-          clientState.dealerId = dealerId;
-          clientState.cumulative = hostState.cumulative;
-          renderGameHeader();
-          renderScores(payload);
-          updateMyCumulative();
-          try { clientState.readyMap = readyMapForBroadcast();
-          } catch {}
-          let revealPromise = null;
-          try { renderTableSeats(); revealPromise = playRevealOnTable(payload);
-          } catch {}
-          $('btnOpenLastReveal').classList.remove('hidden');
-          updateMidActionButton();
-          try { updateMidActionButton();
-          } catch {}
-          if (revealPromise && typeof revealPromise.finally === 'function') {
-            revealPromise.finally(() => startNextReadyPhase(payload.players));
-          } else {
-            startNextReadyPhase(payload.players);
-          }
-          glog('房主已結算本局');
-          try {
-            if (persistState.enabled) {
-              maybeSavePersistRecordAfterRound().catch(()=>{});
-            }
-          } catch {}
-
-          if (hostState.round >= hostState.settings.roundsTotal) {
-            const roomRef = hostRoomId || clientState.roomId || myId;
-            const overPayload = {
-              t:'gameOver',
-              roomId: roomRef,
-              players: allPlayersForBroadcast(),
-              cumulative: hostState.cumulative,
-            };
-            //broadcast(overPayload);
-            clientState.pendingGameOver = {
-              roomId: roomRef,
-              players: overPayload.players,
-              cumulative: overPayload.cumulative,
-            };
-            glog('所有局數完成（關閉本局結算後顯示總結）');
-          }
-          return;
-        }
-
-        // 2) 莊家報到 + 存在閒家報到：莊家報到只對「未報到」閒家生效
-        const results = {};
-        let dealerNet = 0;
-        let affectedCount = 0;
-
-        for (const id of ids) {
-          const sub = hostState.submissions[id];
-          const se = evalMap[id];
-          const reportCode = sub.report || 'none';
-          const sp = reportMap[id] || {ok:true, bonus:0};
-          if (id === dealerId) continue;
-
-          // 閒家報到成功：只計閒家報到（莊家扣除）
-          if (reportCode !== 'none' && sp.ok && sp.bonus > 0) {
-            results[id] = {
-              total: sp.bonus,
-              note: `報到+${sp.bonus}（本局只計報到）`,
-              per: {head:0, mid:0, tail:0},
-              report: reportCode,
-              evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
-              dealerCard: sub.dealerCard,
-            };
-            dealerNet -= sp.bonus;
-            continue;
-          }
-
-          // 沒報到（或擺烏龍）：受莊家報到影響
-          results[id] = {
-            total: -bonus,
-            note: `被莊家報到-${bonus}`,
-            per: {head:0, mid:0, tail:0},
-            report: reportCode,
-            evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
-            dealerCard: sub.dealerCard,
-          };
-          dealerNet += bonus;
-          affectedCount += 1;
-        }
-
-        // dealer (net)
-        const dealerSe = evalMap[dealerId];
-        results[dealerId] = {
-          total: dealerNet,
-          note: `莊家報到+${bonus}×${affectedCount}（已扣除閒家報到；本局只計報到）`,
-          per: {head:0, mid:0, tail:0},
-          report: dealerReportCode,
-          evalNames: { head: dealerSe.head.name, mid: dealerSe.mid.name, tail: dealerSe.tail.name },
-          dealerCard: dealerSub.dealerCard,
-        };
-        for (const id of ids) {
-          hostState.cumulative[id] = Number(hostState.cumulative[id] || 0) + Number(results[id]?.total || 0);
-        }
-
-        const payload = {
-          t:'reveal',
-          round: hostState.round,
-          dealerId,
-          results,
-          submissions: sanitizeSubsForBroadcast(),
-          players: allPlayersForBroadcast(),
-          cumulative: hostState.cumulative,
-        };
-        hostState.revealed = true;
-        broadcast(payload);
-
-        clientState.lastReveal = payload;
-        clientState.dealerId = dealerId;
-        clientState.cumulative = hostState.cumulative;
-        renderGameHeader();
-        renderScores(payload);
-        updateMyCumulative();
-        try { clientState.readyMap = readyMapForBroadcast();
-        } catch {}
-        let revealPromise = null;
-        try { renderTableSeats(); revealPromise = playRevealOnTable(payload);
-        } catch {}
-        $('btnOpenLastReveal').classList.remove('hidden');
-        updateMidActionButton();
-        try { updateMidActionButton();
-        } catch {}
-        if (revealPromise && typeof revealPromise.finally === 'function') {
-          revealPromise.finally(() => startNextReadyPhase(payload.players));
-        } else {
-          startNextReadyPhase(payload.players);
-        }
-        glog('房主已結算本局');
-        try {
-          if (persistState.enabled) {
-            maybeSavePersistRecordAfterRound().catch(()=>{});
-          }
-        } catch {}
-
-        if (hostState.round >= hostState.settings.roundsTotal) {
-          const roomRef = hostRoomId || clientState.roomId || myId;
-          const overPayload = {
-            t:'gameOver',
-            roomId: roomRef,
-            players: allPlayersForBroadcast(),
-            cumulative: hostState.cumulative,
-          };
-          //broadcast(overPayload);
-          clientState.pendingGameOver = {
-            roomId: roomRef,
-            players: overPayload.players,
-            cumulative: overPayload.cumulative,
-          };
-          glog('所有局數完成（關閉本局結算後顯示總結）');
-        }
-        return;
-      }
-
-      // --- 一般結算流程（含閒家擺烏龍處理） ---
-      const results = {};
-      let dealerNet = 0;
-
-      for (const id of ids) {
-        const sub = hostState.submissions[id];
-        const se = evalMap[id];
-        const reportCode = sub.report || 'none';
-        const sp = reportMap[id] || {ok:true, bonus:0};
-        const wulongDealer = wulongSet.has(dealerId);
-
-        // 1) 閒家擺烏龍：只輸給莊家（但報到成功仍優先）
-        if (id !== dealerId && wulongSet.has(id)) {
-          // 報到成功仍優先（因為已在前面被排除出 wulongSet，理論上不會進這行，但保留邏輯以防萬一）
-          if (reportCode !== 'none' && sp.ok && sp.bonus > 0) {
-            const total = sp.bonus;
-            results[id] = {
-              total,
-              note: `報到+${sp.bonus}（本局只計報到）`,
-              per: {head:0, mid:0, tail:0},
-              report: reportCode,
-              evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
-              dealerCard: sub.dealerCard,
-            };
-            dealerNet -= total;
-            continue;
-          }
-
-          // 強制三墩全輸
-          const per = {
-            head: -headWinPoints(dealerEval.head),
-            mid: -midWinPoints(dealerEval.mid),
-            tail: -tailWinPoints(dealerEval.tail),
-          };
-          const total = per.head + per.mid + per.tail;
-
-          const note = (reportCode !== 'none' && !(sp.ok && sp.bonus > 0))
-            ? '報到不符→擺烏龍（本局三墩全輸）'
-            : '擺烏龍（本局三墩全輸）';
-          results[id] = {
-            total,
-            note,
-            per,
-            report: reportCode,
-            evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
-            dealerCard: sub.dealerCard,
-          };
-          dealerNet -= total;
-          continue;
-        }
-
-        // 2) 報到有效（閒家）：不與莊對比，直接得分
-        if (id !== dealerId && reportCode !== 'none' && sp.ok && sp.bonus > 0) {
-          const total = sp.bonus;
-          results[id] = {
-            total,
-            note: `報到+${sp.bonus}（本局只計報到）`,
-            per: {head:0, mid:0, tail:0},
-            report: reportCode,
-            evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
-            dealerCard: sub.dealerCard,
-          };
-          dealerNet -= total;
-          continue;
-        }
-
-        // 3) 正常比牌（或莊家烏龍時閒家全勝）
-        const per = {head:0,mid:0,tail:0};
-        let total = 0;
-        let noteParts = [];
-
-        if (id !== dealerId) {
-          if (wulongDealer) {
-            // 莊家擺烏龍：閒家三墩一律全勝
-            per.head = headWinPoints(se.head);
-            per.mid  = midWinPoints(se.mid);
-            per.tail = tailWinPoints(se.tail);
-            total = per.head + per.mid + per.tail;
-            noteParts.push('莊家失誤：三墩全勝');
-          } else {
-            per.head = headSectionScore(se.head, dealerEval.head);
-            per.mid  = midSectionScore(se.mid, dealerEval.mid);
-            per.tail = tailSectionScore(se.tail, dealerEval.tail);
-            total = per.head + per.mid + per.tail;
-            
-            // 記錄加分細項
-            if (Math.abs(per.head) !== 0 && (se.head.cat === 1 || dealerEval.head.cat === 1)) {
-              if (per.head > 0 && se.head.cat === 1) noteParts.push(`頭墩對子+${headWinPoints(se.head)}`);
-              if (per.head < 0 && dealerEval.head.cat === 1) noteParts.push(`頭墩對子-${headWinPoints(dealerEval.head)}`);
-            }
-            if (Math.abs(per.mid) !== 0 && (se.mid.cat === 5 || se.mid.cat === 4 || dealerEval.mid.cat === 5 || dealerEval.mid.cat === 4)) {
-              if (per.mid > 0) {
-                if (se.mid.cat === 5) noteParts.push('中墩同花順+10');
-                else if (se.mid.cat === 4) noteParts.push('中墩三條+6');
-              } else {
-                if (dealerEval.mid.cat === 5) noteParts.push('中墩同花順-10');
-                else if (dealerEval.mid.cat === 4) noteParts.push('中墩三條-6');
-              }
-            }
-            if (Math.abs(per.tail) !== 0 && (se.tail.cat === 5 || se.tail.cat === 4 || dealerEval.tail.cat === 5 || dealerEval.tail.cat === 4)) {
-              if (per.tail > 0) {
-                if (se.tail.cat === 5) noteParts.push('尾墩同花順+5');
-                else if (se.tail.cat === 4) noteParts.push('尾墩三條+3');
-              } else {
-                if (dealerEval.tail.cat === 5) noteParts.push('尾墩同花順-5');
-                else if (dealerEval.tail.cat === 4) noteParts.push('尾墩三條-3');
-              }
-            }
-          }
-        }
-
-        let note = noteParts.join('｜');
-        // 報到不符但沒在前面被當烏龍處理（只有莊家可能？）
-        if (reportCode !== 'none' && !(sp.ok && sp.bonus > 0)) {
-          note += (note?'｜':'') + (id === dealerId ? '報到不符' : '報到不符→擺烏龍');
-        }
-
-        if (id !== dealerId) dealerNet -= total;
-        results[id] = {
-          total,
-          note,
-          per,
-          report: reportCode,
-          evalNames: { head: se.head.name, mid: se.mid.name, tail: se.tail.name },
-          dealerCard: sub.dealerCard,
-        };
-      }
-
-      // Dealer net
-      if (dealerId && results[dealerId]) {
-        const wulongDealer = wulongSet.has(dealerId);
-        results[dealerId].total = dealerNet;
-        const extra = (wulongDealer ? '擺烏龍（莊家全輸）' : '莊家淨值');
-        results[dealerId].note = (results[dealerId].note ? results[dealerId].note + '｜' : '') + extra;
-      }
 
       for (const id of ids) {
         hostState.cumulative[id] = Number(hostState.cumulative[id] || 0) + Number(results[id]?.total || 0);
