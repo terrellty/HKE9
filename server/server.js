@@ -143,11 +143,34 @@ const server = http.createServer(async (req, res) => {
 });
 
 const wss = new WebSocketServer({ server });
+const HEARTBEAT_INTERVAL_MS = 15000;
+
+function markAlive(ws) {
+  ws.isAlive = true;
+}
+
+const heartbeatInterval = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, HEARTBEAT_INTERVAL_MS);
+
+wss.on('close', () => {
+  clearInterval(heartbeatInterval);
+});
 
 wss.on('connection', (ws) => {
   ws.id = makeId();
   ws.roomId = null;
   ws.role = null;
+  ws.isAlive = true;
+
+  ws.on('pong', () => markAlive(ws));
 
   ws.on('message', (raw) => {
     let msg;
