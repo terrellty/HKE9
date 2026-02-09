@@ -3186,15 +3186,20 @@ function eval3NoJoker(cards) {
       }
 
       if (msg.t === 'hosted') {
+        const wasHost = isHost && hostRoomId;
+        const prevHostId = hostId;
         hostRoomId = msg.roomId;
         clientState.roomId = msg.roomId;
         myId = msg.id;
         hostId = msg.hostId;
         isHost = true;
+        if (wasHost && prevHostId && hostId && prevHostId !== hostId) {
+          migrateHostIdentity(prevHostId, hostId);
+        }
         $('myPeerId').textContent = hostRoomId || msg.roomId;
         setRoleBadges();
         setBadge(true, '房間已建立');
-        void finalizeHostCreation();
+        void finalizeHostCreation({ preserveState: wasHost });
         return;
       }
 
@@ -3825,21 +3830,25 @@ function eval3NoJoker(cards) {
       log('已重置');
     }
 
-    async function finalizeHostCreation() {
+    async function finalizeHostCreation({ preserveState = false } = {}) {
       // Init seat order and persisted record (DAY/NIG)
-      try {
-        const rid = String(hostRoomId || '').trim().toUpperCase();
-        if (isPersistRoomId(rid)) {
-          await maybeLoadPersistRecordForHost(rid);
-        } else {
-          persistState.enabled = false;
-          persistState.roomId = '';
-        }
-      } catch {}
+      if (!preserveState) {
+        try {
+          const rid = String(hostRoomId || '').trim().toUpperCase();
+          if (isPersistRoomId(rid)) {
+            await maybeLoadPersistRecordForHost(rid);
+          } else {
+            persistState.enabled = false;
+            persistState.roomId = '';
+          }
+        } catch {}
+      }
 
       // If we loaded persisted scores for host, keep it; otherwise reset.
       if (!persistState.enabled) {
-        hostState.cumulative = {};
+        if (!preserveState) {
+          hostState.cumulative = {};
+        }
       } else {
         // ensure host cumulative exists
         try { applyPersistScoreForPeer(hostId, clientState.myName); } catch {}
@@ -4865,6 +4874,35 @@ function eval3NoJoker(cards) {
       const out = {};
       for (const id of roundPlayerIds()) out[id] = !!hostState.submissions[id];
       return out;
+    }
+
+    function migrateHostIdentity(prevId, nextId) {
+      if (!prevId || !nextId || prevId === nextId) return;
+      if (hostState.dealt?.[prevId]) {
+        hostState.dealt[nextId] = hostState.dealt[prevId];
+        delete hostState.dealt[prevId];
+      }
+      if (hostState.submissions?.[prevId]) {
+        hostState.submissions[nextId] = hostState.submissions[prevId];
+        delete hostState.submissions[prevId];
+      }
+      if (hostState.cumulative?.[prevId] !== undefined) {
+        hostState.cumulative[nextId] = hostState.cumulative[prevId];
+        delete hostState.cumulative[prevId];
+      }
+      if (Array.isArray(hostState.seatOrder) && hostState.seatOrder.length) {
+        hostState.seatOrder = hostState.seatOrder.map((id) => (id === prevId ? nextId : id));
+      }
+      if (hostState.dealerId === prevId) hostState.dealerId = nextId;
+      if (hostState.dealerOverride === prevId) hostState.dealerOverride = nextId;
+      if (hostState.dealerPick?.controllerId === prevId) {
+        hostState.dealerPick = { ...hostState.dealerPick, controllerId: nextId };
+      }
+      if (clientState.dealerId === prevId) clientState.dealerId = nextId;
+      if (clientState.readyMap?.[prevId] !== undefined) {
+        clientState.readyMap[nextId] = clientState.readyMap[prevId];
+        delete clientState.readyMap[prevId];
+      }
     }
 
     function allSubmitted() {
