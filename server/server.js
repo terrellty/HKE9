@@ -195,7 +195,7 @@ const server = http.createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server });
 const HEARTBEAT_INTERVAL_MS = 15000;
-const HOST_RECONNECT_GRACE_MS = 30000;
+const HOST_RECONNECT_GRACE_MS = 60000;
 
 function markAlive(ws) {
   ws.isAlive = true;
