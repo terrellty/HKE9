@@ -781,7 +781,7 @@
           <div>
             <div class="text-xs text-emerald-100/70">計分版</div>
             <div class="mt-1 text-lg font-black tracking-tight">DAY / MONTH</div>
-            <div class="mt-1 text-xs text-emerald-100/70">資料來源：GitHub records/DAY.json、records/MON.json（只顯示累計）</div>
+            <div class="mt-1 text-xs text-emerald-100/70">資料來源：Render API（PostgreSQL）優先，失敗時回退 GitHub records（只顯示累計）</div>
           </div>
           <div class="flex items-center gap-2">
             <button id="btnScoreboardRefresh" class="text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">重新載入</button>
@@ -1932,7 +1932,7 @@
       // backward-compat: NIG is now MON
       if (rid === 'NIG' || rid === 'NIGHT') rid = 'MON';
       if (!['DAY','MON'].includes(rid)) return null;
-      const data = await githubReadRecord(rid);
+      const data = await persistReadRecord(rid);
       if (!data) throw new Error('Record not found');
       return data;
     }
@@ -3589,10 +3589,10 @@ function eval3NoJoker(cards) {
       waitingForHost: false,
     };
 
-    // -------------------- Persisted room record (DAY/MON) via GitHub repo + Cloudflare Worker --------------------
+    // -------------------- Persisted room record (DAY/MON) via Render API(PostgreSQL) + fallback GitHub/Worker --------------------
     // Goal: DAY/MON rooms share a persistent scoreboard across devices.
-    // Read: public JSON from GitHub repo (raw.githubusercontent.com)
-    // Write: Cloudflare Worker that holds a GitHub token and commits back to the repo.
+    // Read/Write preferred path: Render relay API (/records/:roomId and /save, backed by PostgreSQL).
+    // Fallback path: GitHub JSON + Cloudflare Worker.
     // Fallback: always cache to localStorage so the host device can recover even if worker fails.
 
     const PERSIST_ROOM_IDS = new Set(['DAY','MON']);
@@ -3669,14 +3669,66 @@ function eval3NoJoker(cards) {
       }
     }
 
+    async function serverReadRecord(roomId) {
+      const rid = String(roomId||'').trim().toUpperCase();
+      const base = relayHttpUrl();
+      if (!base) return null;
+      const url = `${base}/records/${encodeURIComponent(rid)}`;
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.status === 404 || res.status === 503) return null;
+        if (!res.ok) {
+          const txt = await res.text().catch(()=> '');
+          dlog(`Persist(API): read failed (${res.status}) ${rid}: ${txt.slice(0,140)}`);
+          return null;
+        }
+        return await res.json();
+      } catch (e) {
+        dlog(`Persist(API): read error ${rid}: ${e?.message || e}`);
+        return null;
+      }
+    }
+
+    async function persistReadRecord(roomId) {
+      const fromApi = await serverReadRecord(roomId);
+      if (fromApi) return fromApi;
+      return await githubReadRecord(roomId);
+    }
+
     async function workerWriteRecord(roomId, record) {
+      const secret = persistWorkerSecret();
+      const rid = String(roomId||'').trim().toUpperCase();
+
+      // 1) Prefer the Render relay backend (/save backed by PostgreSQL).
+      const relayBase = relayHttpUrl();
+      if (relayBase) {
+        const relayUrl = `${relayBase}/save`;
+        try {
+          const res = await fetch(relayUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(secret ? {'X-Persist-Key': secret} : {}),
+            },
+            body: JSON.stringify({ roomId: rid, record }),
+          });
+          const txt = await res.text().catch(()=> '');
+          if (res.ok) {
+            dlog(`Persist(API): save OK ${rid}`);
+            return true;
+          }
+          dlog(`Persist(API): save failed (${res.status}) ${rid}: ${txt.slice(0,160)}`);
+        } catch (e) {
+          dlog(`Persist(API): save error ${rid}: ${e?.message || e}`);
+        }
+      }
+
+      // 2) Fallback to existing worker flow.
       const base = persistWorkerUrl();
       if (!base) {
         dlog('Persist(Worker): worker URL not set (localStorage ninePokerPersistWorkerUrl). Saved locally only.');
         return false;
       }
-      const secret = persistWorkerSecret();
-      const rid = String(roomId||'').trim().toUpperCase();
       const url = `${base}/save`;
       try {
         dlog(`Persist(Worker): POST ${url} room=${rid}`);
