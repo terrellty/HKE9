@@ -34,8 +34,9 @@ export default {
       return new Response("Bad JSON", { status: 400, headers: corsHeaders });
     }
 
-    const roomId = String(body?.roomId || "").trim().toUpperCase();
-    if (!["DAY", "NIG"].includes(roomId)) {
+    const rawRoomId = String(body?.roomId || "").trim().toUpperCase();
+    const roomId = (rawRoomId === "NIGHT" || rawRoomId === "NIG") ? "MON" : rawRoomId;
+    if (!["DAY", "MON"].includes(roomId)) {
       return new Response("Invalid roomId", { status: 400, headers: corsHeaders });
     }
 
