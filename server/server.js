@@ -1,10 +1,83 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
+const { Pool } = require('pg');
 const { computeRoundResult } = require('./score');
 
 const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const SERVER_HOST_ID = 'SERVER';
+const RECORD_ROOM_IDS = new Set(['DAY', 'MON']);
+
+let recordsPool = null;
+let recordsDbReady = false;
+
+function hasRecordsDb() {
+  return Boolean(process.env.DATABASE_URL);
+}
+
+async function ensureRecordsDb() {
+  if (!hasRecordsDb()) {
+    throw new Error('DATABASE_URL is not configured');
+  }
+  if (!recordsPool) {
+    recordsPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
+    });
+  }
+  if (recordsDbReady) return;
+
+  await recordsPool.query(`
+    CREATE TABLE IF NOT EXISTS room_records (
+      room_id TEXT PRIMARY KEY,
+      record JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  recordsDbReady = true;
+}
+
+function normalizeRecordRoomId(value) {
+  const roomId = String(value || '').trim().toUpperCase();
+  if (!RECORD_ROOM_IDS.has(roomId)) return null;
+  return roomId;
+}
+
+async function readRecord(roomId) {
+  await ensureRecordsDb();
+  const result = await recordsPool.query(
+    'SELECT room_id, record, updated_at FROM room_records WHERE room_id = $1 LIMIT 1',
+    [roomId],
+  );
+  if (!result.rows.length) return null;
+  const row = result.rows[0];
+  return {
+    roomId: row.room_id,
+    ...(row.record || {}),
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at || ''),
+  };
+}
+
+async function writeRecord(roomId, record) {
+  await ensureRecordsDb();
+  const nowIso = new Date().toISOString();
+  const payload = {
+    ...(record || {}),
+    roomId,
+    updatedAt: nowIso,
+  };
+  await recordsPool.query(
+    `
+      INSERT INTO room_records (room_id, record, updated_at)
+      VALUES ($1, $2::jsonb, $3::timestamptz)
+      ON CONFLICT (room_id) DO UPDATE
+      SET record = EXCLUDED.record,
+          updated_at = EXCLUDED.updated_at
+    `,
+    [roomId, JSON.stringify(payload), nowIso],
+  );
+  return payload;
+}
 
 const rooms = new Map();
 
@@ -103,6 +176,123 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { dealerId, results });
     } catch (error) {
       sendJson(res, 400, { error: error.message || 'Failed to compute score' });
+    }
+    return;
+  }
+
+  if (pathname.startsWith('/records/')) {
+    setCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (!hasRecordsDb()) {
+      sendJson(res, 503, { error: 'Records DB is not configured' });
+      return;
+    }
+
+    const roomId = normalizeRecordRoomId(pathname.replace('/records/', ''));
+    if (!roomId) {
+      sendJson(res, 400, { error: 'Invalid room id' });
+      return;
+    }
+
+    if (req.method === 'GET') {
+      try {
+        const record = await readRecord(roomId);
+        if (!record) {
+          sendJson(res, 404, { error: 'Record not found' });
+          return;
+        }
+        sendJson(res, 200, record);
+      } catch (error) {
+        sendJson(res, 500, { error: error.message || 'Failed to read record' });
+      }
+      return;
+    }
+
+    if (req.method === 'POST') {
+      let bodyText;
+      try {
+        bodyText = await readRequestBody(req);
+      } catch (error) {
+        sendJson(res, 413, { error: error.message });
+        return;
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(bodyText);
+      } catch {
+        sendJson(res, 400, { error: 'Bad JSON' });
+        return;
+      }
+      if (!payload?.record || typeof payload.record !== 'object') {
+        sendJson(res, 400, { error: 'Invalid record' });
+        return;
+      }
+
+      try {
+        const saved = await writeRecord(roomId, payload.record);
+        sendJson(res, 200, { ok: true, ...saved });
+      } catch (error) {
+        sendJson(res, 500, { error: error.message || 'Failed to write record' });
+      }
+      return;
+    }
+
+    sendJson(res, 405, { error: 'Method not allowed' });
+    return;
+  }
+
+  if (pathname === '/save') {
+    setCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (!hasRecordsDb()) {
+      sendJson(res, 503, { error: 'Records DB is not configured' });
+      return;
+    }
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    let bodyText;
+    try {
+      bodyText = await readRequestBody(req);
+    } catch (error) {
+      sendJson(res, 413, { error: error.message });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(bodyText);
+    } catch {
+      sendJson(res, 400, { error: 'Bad JSON' });
+      return;
+    }
+
+    const roomId = normalizeRecordRoomId(payload?.roomId);
+    if (!roomId) {
+      sendJson(res, 400, { error: 'Invalid room id' });
+      return;
+    }
+    if (!payload?.record || typeof payload.record !== 'object') {
+      sendJson(res, 400, { error: 'Invalid record' });
+      return;
+    }
+
+    try {
+      const saved = await writeRecord(roomId, payload.record);
+      sendJson(res, 200, { ok: true, ...saved });
+    } catch (error) {
+      sendJson(res, 500, { error: error.message || 'Failed to save record' });
     }
     return;
   }
@@ -487,4 +677,5 @@ wss.on('connection', (ws) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`HKE9 relay server listening on :${PORT}`);
+  console.log(`Records DB: ${hasRecordsDb() ? 'enabled (DATABASE_URL set)' : 'disabled (using fallback)'}`);
 });
