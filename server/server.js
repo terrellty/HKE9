@@ -288,6 +288,12 @@ function relayToRoom(room, payload, exceptId = null) {
   }
 }
 
+function currentRoundPlayerIds(room) {
+  const dealtIds = Object.keys(room.dealt || {});
+  if (!dealtIds.length) return room.seatOrder.filter((id) => room.clients.has(id));
+  return room.seatOrder.filter((id) => room.clients.has(id) && room.dealt[id]);
+}
+
 function broadcastPlayers(room) {
   relayToRoom(room, { t: 'players', list: roomPlayers(room), hostId: SERVER_HOST_ID, hostName: 'SERVER', seatOrder: room.seatOrder.slice() });
 }
@@ -333,7 +339,8 @@ function maybeStartNextRound(room) {
     return;
   }
   if (!room.revealed) return;
-  const allReady = ids.every((id) => room.nextReadyMap[id]);
+  const nextReadyIds = currentRoundPlayerIds(room);
+  const allReady = nextReadyIds.length > 0 && nextReadyIds.every((id) => room.nextReadyMap[id]);
   if (!allReady) return;
   relayToRoom(room, { t: 'nextRound', round: room.round + 1 });
   dealRound(room);
@@ -341,7 +348,7 @@ function maybeStartNextRound(room) {
 
 function resolveReveal(room) {
   const subs = room.submissions;
-  const ids = room.seatOrder.filter((id) => room.clients.has(id));
+  const ids = currentRoundPlayerIds(room);
   if (!ids.length) return;
   if (!ids.every((id) => !!subs[id])) return;
 
@@ -451,8 +458,10 @@ wss.on('connection', (ws) => {
 
       if (room.started && !room.revealed && room.dealt[ws.id]) {
         const ready = {};
-        for (const id of room.seatOrder) ready[id] = !!room.submissions[id];
+        for (const id of currentRoundPlayerIds(room)) ready[id] = !!room.submissions[id];
         send(ws, { t: 'relay', fromId: SERVER_HOST_ID, payload: { t: 'deal', round: room.round, cards9: room.dealt[ws.id].all9, ready, resume: true } });
+      } else if (room.started && !room.revealed) {
+        send(ws, { t: 'relay', fromId: SERVER_HOST_ID, payload: { t: 'waitNextRound', round: room.round } });
       }
       if (room.revealed) {
         send(ws, { t: 'relay', fromId: SERVER_HOST_ID, payload: { t: 'waitNextRound', round: room.round } });
@@ -504,7 +513,7 @@ wss.on('connection', (ws) => {
         room.submissions[ws.id] = { ...ok.data, report: String(payload.report || 'none') };
 
         const ready = {};
-        for (const id of room.seatOrder) ready[id] = !!room.submissions[id];
+        for (const id of currentRoundPlayerIds(room)) ready[id] = !!room.submissions[id];
         relayToRoom(room, { t: 'ready', ready });
         resolveReveal(room);
         return;
