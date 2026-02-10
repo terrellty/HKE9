@@ -1932,10 +1932,9 @@
       // backward-compat: NIG is now MON
       if (rid === 'NIG' || rid === 'NIGHT') rid = 'MON';
       if (!['DAY','MON'].includes(rid)) return null;
-      const url = `https://raw.githubusercontent.com/${PERSIST_REPO.owner}/${PERSIST_REPO.repo}/${PERSIST_REPO.branch}/${PERSIST_REPO.dir}/${encodeURIComponent(rid)}.json?bust=${Date.now()}`;
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
+      const data = await githubReadRecord(rid);
+      if (!data) throw new Error('Record not found');
+      return data;
     }
 
     async function loadScoreboard(force=false) {
@@ -3265,6 +3264,8 @@ function eval3NoJoker(cards) {
         isHost = false;
         $('myPeerId').textContent = clientState.roomId || msg.roomId;
         setRoleBadges();
+        // Server-host mode: client side still needs persist enabled for DAY/MON rooms.
+        void maybeEnablePersistForRoom(clientState.roomId);
         clientState.waitingForHost = !hostId;
         if (hostId) {
           clientConn = createRelayConn(hostId, false);
@@ -3588,10 +3589,10 @@ function eval3NoJoker(cards) {
       waitingForHost: false,
     };
 
-    // -------------------- Persisted room record (DAY/NIG) via GitHub repo + Cloudflare Worker --------------------
-    // Goal: DAY/NIG rooms share a persistent scoreboard across devices.
+    // -------------------- Persisted room record (DAY/MON) via GitHub repo + Cloudflare Worker --------------------
+    // Goal: DAY/MON rooms share a persistent scoreboard across devices.
     // Read: public JSON from GitHub repo (raw.githubusercontent.com)
-    // Write: Cloudflare Worker (free) that holds a GitHub token and commits back to the repo.
+    // Write: Cloudflare Worker that holds a GitHub token and commits back to the repo.
     // Fallback: always cache to localStorage so the host device can recover even if worker fails.
 
     const PERSIST_ROOM_IDS = new Set(['DAY','MON']);
@@ -3604,8 +3605,7 @@ function eval3NoJoker(cards) {
       dir: 'records',
     };
 
-    // Cloudflare Worker endpoint (you will deploy this). Leave empty to disable cloud write.
-    // You can also override at runtime via localStorage:
+    // Cloudflare Worker endpoint. You can override at runtime via localStorage:
     //   localStorage.setItem('ninePokerPersistWorkerUrl', 'https://<your-worker>.workers.dev');
     // Optional shared secret (if your worker checks it):
     //   localStorage.setItem('ninePokerPersistSecret', '...');
@@ -3615,7 +3615,7 @@ function eval3NoJoker(cards) {
       enabled: false,
       roomId: '',
       scoresByName: {}, // {name: number}
-      // NOTE: We intentionally do NOT keep per-round history for DAY/NIG.
+      // NOTE: We intentionally do NOT keep per-round history for DAY/MON.
       // Only cumulative totals are stored.
     };
 
@@ -3648,7 +3648,6 @@ function eval3NoJoker(cards) {
     function githubRawRecordUrl(roomId) {
       const rid = String(roomId||'').trim().toUpperCase();
       const {owner, repo, branch, dir} = PERSIST_REPO;
-      // bust avoids CDN/browser cache
       return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dir}/${encodeURIComponent(rid)}.json?bust=${Date.now()}`;
     }
 
@@ -3676,9 +3675,10 @@ function eval3NoJoker(cards) {
         return false;
       }
       const secret = persistWorkerSecret();
-      const url = base + '/save';
+      const rid = String(roomId||'').trim().toUpperCase();
+      const url = `${base}/save`;
       try {
-        dlog(`Persist(Worker): POST ${url} room=${String(roomId||'').trim().toUpperCase()}`);
+        dlog(`Persist(Worker): POST ${url} room=${rid}`);
       } catch {}
       try {
         const res = await fetch(url, {
@@ -3687,17 +3687,17 @@ function eval3NoJoker(cards) {
             'Content-Type': 'application/json',
             ...(secret ? {'X-Persist-Key': secret} : {}),
           },
-          body: JSON.stringify({ roomId: String(roomId||'').trim().toUpperCase(), record }),
+          body: JSON.stringify({ roomId: rid, record }),
         });
         const txt = await res.text().catch(()=> '');
         if (!res.ok) {
-          dlog(`Persist(Worker): save failed (${res.status}) ${roomId}: ${txt.slice(0,160)}`);
+          dlog(`Persist(Worker): save failed (${res.status}) ${rid}: ${txt.slice(0,160)}`);
           return false;
         }
-        dlog(`Persist(Worker): save OK ${roomId}`);
+        dlog(`Persist(Worker): save OK ${rid}`);
         return true;
       } catch (e) {
-        dlog(`Persist(Worker): save error ${roomId}: ${e?.message || e}`);
+        dlog(`Persist(Worker): save error ${rid}: ${e?.message || e}`);
         return false;
       }
     }
@@ -3778,9 +3778,15 @@ function eval3NoJoker(cards) {
       await workerWriteRecord(rid, record);
     }
 
-    async function maybeLoadPersistRecordForHost(roomId) {
+    async function maybeEnablePersistForRoom(roomId) {
       const rid = String(roomId||'').trim().toUpperCase();
-      if (!isPersistRoomId(rid)) return;
+      if (!isPersistRoomId(rid)) {
+        persistState.enabled = false;
+        persistState.roomId = '';
+        persistState.scoresByName = {};
+        return false;
+      }
+
       persistState.enabled = true;
       persistState.roomId = rid;
       try { dlog(`Persist: enabled for ${rid} | worker=${persistWorkerUrl()}`); } catch {}
@@ -3792,7 +3798,7 @@ function eval3NoJoker(cards) {
           const json = JSON.parse(cached);
           if (json && typeof json === 'object') {
             persistState.scoresByName = json.scoresByName || {};
-            dlog(`Persist(GH): loaded local cache for ${rid}`);
+            dlog(`Persist(Local): loaded local cache for ${rid}`);
           }
         }
       } catch {}
@@ -3807,6 +3813,12 @@ function eval3NoJoker(cards) {
         dlog(`Persist(GH): no GitHub record found for ${rid} (expected /${PERSIST_REPO.dir}/${rid}.json)`);
       }
 
+      return true;
+    }
+
+    async function maybeLoadPersistRecordForHost(roomId) {
+      const ok = await maybeEnablePersistForRoom(roomId);
+      if (!ok) return;
       // Apply score to host now
       try { applyPersistScoreForPeer(hostId, clientState.myName); } catch {}
     }

@@ -1,16 +1,12 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
-const fs = require('fs/promises');
-const path = require('path');
 const { computeRoundResult } = require('./score');
 
 const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const SERVER_HOST_ID = 'SERVER';
 
 const rooms = new Map();
-const recordsDir = path.resolve(__dirname, '..', 'records');
-const allowedPersistRooms = new Set(['DAY', 'NIG', 'MON']);
 
 function makeId() {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 10);
@@ -64,80 +60,6 @@ async function readRequestBody(req, limit = 1_000_000) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const { pathname } = url;
-
-  if (pathname.startsWith('/persist')) {
-    setCorsHeaders(res);
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    if (pathname === '/persist/record' && req.method === 'GET') {
-      const roomId = String(url.searchParams.get('roomId') || '').trim().toUpperCase();
-      if (!allowedPersistRooms.has(roomId)) {
-        sendJson(res, 400, { error: 'Invalid roomId' });
-        return;
-      }
-      try {
-        const filePath = path.join(recordsDir, `${roomId}.json`);
-        const data = await fs.readFile(filePath, 'utf8');
-        sendJson(res, 200, JSON.parse(data));
-      } catch (error) {
-        if (error.code === 'ENOENT') {
-          sendJson(res, 404, { error: 'Not found' });
-          return;
-        }
-        sendJson(res, 500, { error: 'Failed to read record' });
-      }
-      return;
-    }
-
-    if (pathname === '/persist/save' && req.method === 'POST') {
-      let bodyText;
-      try {
-        bodyText = await readRequestBody(req);
-      } catch (error) {
-        sendJson(res, 413, { error: error.message });
-        return;
-      }
-      let payload;
-      try {
-        payload = JSON.parse(bodyText);
-      } catch {
-        sendJson(res, 400, { error: 'Bad JSON' });
-        return;
-      }
-
-      const roomId = String(payload?.roomId || '').trim().toUpperCase();
-      if (!allowedPersistRooms.has(roomId)) {
-        sendJson(res, 400, { error: 'Invalid roomId' });
-        return;
-      }
-      const record = payload?.record;
-      if (!record || typeof record !== 'object') {
-        sendJson(res, 400, { error: 'Invalid record' });
-        return;
-      }
-
-      const now = new Date().toISOString();
-      record.roomId = roomId;
-      record.updatedAt = now;
-
-      try {
-        await fs.mkdir(recordsDir, { recursive: true });
-        const filePath = path.join(recordsDir, `${roomId}.json`);
-        await fs.writeFile(filePath, JSON.stringify(record, null, 2), 'utf8');
-        sendJson(res, 200, { ok: true, roomId, updatedAt: now });
-      } catch {
-        sendJson(res, 500, { error: 'Failed to save record' });
-      }
-      return;
-    }
-
-    sendJson(res, 404, { error: 'Not found' });
-    return;
-  }
 
   if (pathname === '/score') {
     setCorsHeaders(res);
