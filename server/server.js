@@ -368,6 +368,7 @@ function getRoom(roomId) {
       clients: new Map(),
       seatOrder: [],
       cumulative: {},
+      cumulativeByName: {},
       settings: { roundsTotal: 0, bbMode: false },
       round: 0,
       started: false,
@@ -474,8 +475,14 @@ function resolveReveal(room) {
 
   const dealerId = scoreData.dealerId;
   for (const id of ids) {
+    const playerName = String(room.clients.get(id)?.name || '').trim();
+    const baseline =
+      room.cumulative[id] !== undefined
+        ? Number(room.cumulative[id] || 0)
+        : Number(playerName ? room.cumulativeByName[playerName] || 0 : 0);
     const roundTotal = Number(scoreData.results?.[id]?.total || 0);
-    room.cumulative[id] = Number(room.cumulative[id] || 0) + roundTotal;
+    room.cumulative[id] = baseline + roundTotal;
+    if (playerName) room.cumulativeByName[playerName] = room.cumulative[id];
   }
 
   room.revealed = true;
@@ -543,9 +550,13 @@ wss.on('connection', (ws) => {
       }
       const room = getRoom(roomId);
       ws.roomId = roomId;
-      room.clients.set(ws.id, { socket: ws, name: String(msg.name || '玩家').trim() || '玩家' });
+      const playerName = String(msg.name || '玩家').trim() || '玩家';
+      room.clients.set(ws.id, { socket: ws, name: playerName });
       if (!room.seatOrder.includes(ws.id)) room.seatOrder.push(ws.id);
       room.preStartReadyMap[ws.id] = false;
+      if (room.cumulative[ws.id] === undefined && room.cumulativeByName[playerName] !== undefined) {
+        room.cumulative[ws.id] = Number(room.cumulativeByName[playerName] || 0);
+      }
 
       send(ws, { t: 'joined', roomId, id: ws.id, hostId: SERVER_HOST_ID });
       send(ws, {
@@ -591,7 +602,15 @@ wss.on('connection', (ws) => {
 
       if (payload.t === 'join') {
         const p = room.clients.get(ws.id);
-        if (p) p.name = String(payload.name || p.name || '玩家').trim() || '玩家';
+        if (p) {
+          const prevName = String(p.name || '').trim();
+          const nextName = String(payload.name || p.name || '玩家').trim() || '玩家';
+          p.name = nextName;
+          if (room.cumulative[ws.id] !== undefined) {
+            if (prevName) room.cumulativeByName[prevName] = Number(room.cumulative[ws.id] || 0);
+            if (nextName) room.cumulativeByName[nextName] = Number(room.cumulative[ws.id] || 0);
+          }
+        }
         broadcastPlayers(room);
         return;
       }
@@ -655,6 +674,12 @@ wss.on('connection', (ws) => {
     if (!roomId) return;
     const room = rooms.get(roomId);
     if (!room) return;
+
+    const closedPlayer = room.clients.get(ws.id);
+    const closedName = String(closedPlayer?.name || '').trim();
+    if (closedName && room.cumulative[ws.id] !== undefined) {
+      room.cumulativeByName[closedName] = Number(room.cumulative[ws.id] || 0);
+    }
 
     room.clients.delete(ws.id);
     room.seatOrder = room.seatOrder.filter((id) => id !== ws.id);
