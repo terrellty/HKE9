@@ -1095,6 +1095,25 @@
 
       return `${base} ${scoreText}`;
     }
+
+    function autoShrinkTextToFit(node, { maxPx = 12, minPx = 9, step = 0.5 } = {}) {
+      if (!node) return;
+      // reset to max first, then shrink only when overflow happens
+      node.style.fontSize = `${maxPx}px`;
+      node.style.whiteSpace = 'nowrap';
+
+      let size = maxPx;
+      while (size > minPx && node.scrollWidth > node.clientWidth) {
+        size = Math.max(minPx, size - step);
+        node.style.fontSize = `${size}px`;
+      }
+    }
+
+    function setSeatNameText(node, text) {
+      if (!node) return;
+      node.textContent = text;
+      requestAnimationFrame(() => autoShrinkTextToFit(node));
+    }
     
     function isLobbyVisible() {
       const lobby = $('pageLobby');
@@ -5904,9 +5923,10 @@ async function revealRound() {
         const curScoreText = curScore > 0 ? `+${curScore}` : curScore;
 
         // 2. 建立名稱時，直接包含分數
-        const nameLine = el('div', 'text-xs font-black text-slate-50 truncate text-center', `${p.name}${p.isHost ? '（房主）' : ''} ${curScoreText}`);
+        const nameLine = el('div', 'font-black text-slate-50 text-center w-full', `${p.name}${p.isHost ? '（房主）' : ''} ${curScoreText}`);
         nameLine.id = 'seatName_' + p.id;
         badge.appendChild(nameLine);
+        setSeatNameText(nameLine, `${p.name}${p.isHost ? '（房主）' : ''} ${curScoreText}`);
         
         // 房主踢人按鈕 (顯示在頭像右上角)
         if (isHost && p.id !== hostId) {
@@ -5975,8 +5995,8 @@ async function revealRound() {
         // 移除舊的分數後綴以免重複 (簡單的 regex 處理)
         baseName = baseName.replace(/\s[+\-]?\d+$/, ''); 
 
-        n.textContent = `${baseName} ${scoreText}`;
-        if (p.id === dealerId) n.textContent = '👑 ' + n.textContent;
+        setSeatNameText(n, `${baseName} ${scoreText}`);
+        if (p.id === dealerId) setSeatNameText(n, `👑 ${baseName} ${scoreText}`);
       }
 
       // Show dealer-card badge next to icon (after reveal)
