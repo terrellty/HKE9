@@ -362,15 +362,8 @@
                 </div>
 
                 <div class="grid gap-1">
-                  <div class="flex items-center justify-between">
-                    <label class="text-[11px] text-emerald-100/70">房間號（加入 / 建立）</label>
-                    <label class="inline-flex items-center gap-1.5 text-[11px] text-emerald-100/80 select-none">
-                      <input id="chkUseTurn" type="checkbox" class="accent-amber-400" />
-                      TURN
-                    </label>
-                  </div>
+                  <label class="text-[11px] text-emerald-100/70">房間號（加入 / 建立）</label>
                   <input id="inpRoomId" class="w-full mono bg-black/35 border border-white/10 rounded-xl px-3 py-2 outline-none focus:border-amber-200/50" placeholder="留空＝自動加入；填入＝指定房號" />
-                  <div class="text-[10px] text-emerald-100/70">提示：跨網絡連不上時再勾 TURN（中繼）。</div>
                 </div>
 
                 <div class="flex gap-2">
@@ -400,35 +393,6 @@
                   </div>
                 </div>
 
-                <details class="hidden rounded-xl bg-black/20 border border-white/10 p-2">
-                  <summary class="cursor-pointer select-none text-[11px] text-emerald-100/80">更多設定（進階連線）</summary>
-                  <div class="mt-2 grid gap-2">
-                    <div class="grid gap-1">
-                      <label class="text-[11px] text-emerald-100/70">TURN URL（選填）</label>
-                      <input id="inpTurnUrl" class="mono bg-black/35 border border-white/10 rounded-xl px-3 py-2 outline-none focus:border-amber-200/50" placeholder="turns:your-domain:5349 或 turn:ip:3478" maxlength="120" />
-                    </div>
-                    <div class="grid sm:grid-cols-2 gap-2">
-                      <div class="grid gap-1">
-                        <label class="text-[11px] text-emerald-100/70">TURN Username（選填）</label>
-                        <input id="inpTurnUser" class="mono bg-black/35 border border-white/10 rounded-xl px-3 py-2 outline-none focus:border-amber-200/50" placeholder="username" maxlength="80" />
-                      </div>
-                      <div class="grid gap-1">
-                        <label class="text-[11px] text-emerald-100/70">TURN Password（選填）</label>
-                        <input id="inpTurnPass" type="password" class="mono bg-black/35 border border-white/10 rounded-xl px-3 py-2 outline-none focus:border-amber-200/50" placeholder="password" maxlength="80" />
-                      </div>
-                    </div>
-                    <label class="inline-flex items-center gap-2 text-[11px] text-emerald-100/80">
-                      <input id="chkRelayOnly" type="checkbox" class="accent-amber-400" />
-                      優先使用中繼（relay-only，需要 TURN；延遲會增加）
-                    </label>
-                    <div class="flex flex-wrap items-center gap-2">
-                      <button id="btnSaveNet" class="text-[11px] px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">儲存</button>
-                      <button id="btnClearNet" class="text-[11px] px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">恢復預設</button>
-                      <button id="btnTestTurn" class="text-[11px] px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">測試 TURN</button>
-                    </div>
-                    <div id="turnTestStatus" class="text-[11px] text-emerald-100/70">TURN 測試：尚未測試</div>
-                  </div>
-                </details>
               </div>
             </div>
           </div>
@@ -4089,208 +4053,6 @@ function eval3NoJoker(cards) {
       $('inpName').value = clientState.myName;
     }
 
-    // Default TURN (for cross-network/NAT)
-    const DEFAULT_NET_CONFIG = {
-      // 內建 TURN（預設不啟用；跨網絡連不上時再開）
-      useTurn: false,
-      turnUrl: 'turn:global.relay.metered.ca:80',
-      turnUser: '68e493ec5be127af015d802b',
-      turnPass: '/hFwmC/JAHDCqiic',
-      relayOnly: false,
-    };
-
-    function loadNetConfig() {
-      try {
-        const raw = localStorage.getItem('ninePokerNetConfig');
-        if (!raw) return { ...DEFAULT_NET_CONFIG };
-        const parsed = JSON.parse(raw) || {};
-        // Allow user to clear by saving empty strings
-        return { ...DEFAULT_NET_CONFIG, ...parsed };
-      } catch {
-        return { ...DEFAULT_NET_CONFIG };
-      }
-    }
-
-    function saveNetConfig(cfg) {
-      localStorage.setItem('ninePokerNetConfig', JSON.stringify(cfg));
-    }
-
-    function applyNetConfigToUI() {
-      const cfg = loadNetConfig();
-      const use = $('chkUseTurn');
-      const u = $('inpTurnUrl');
-      const us = $('inpTurnUser');
-      const pw = $('inpTurnPass');
-      const ro = $('chkRelayOnly');
-      if (use) use.checked = !!cfg.useTurn;
-      if (u) u.value = cfg.turnUrl || '';
-      if (us) us.value = cfg.turnUser || '';
-      if (pw) pw.value = cfg.turnPass || '';
-      if (ro) ro.checked = !!cfg.relayOnly;
-
-      // Lobby quick toggle uses the same checkbox id; keep it in sync
-      try {
-        if ($('chkUseTurn')) $('chkUseTurn').checked = !!cfg.useTurn;
-      } catch {}
-    }
-
-    function buildPeerOptions() {
-      const cfg = loadNetConfig();
-
-      const turnServers = (cfg.useTurn && cfg.turnUrl ? [
-        {
-          urls: String(cfg.turnUrl).trim(),
-          username: String(cfg.turnUser || ''),
-          credential: String(cfg.turnPass || ''),
-        },
-        {
-          urls: String(cfg.turnUrl).trim().includes('transport=')
-            ? String(cfg.turnUrl).trim()
-            : (String(cfg.turnUrl).trim() + '?transport=tcp'),
-          username: String(cfg.turnUser || ''),
-          credential: String(cfg.turnPass || ''),
-        },
-      ] : []);
-
-      const stunServers = [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:global.stun.twilio.com:3478' },
-      ];
-
-      const sanitizeIceServers = (servers) => {
-        const out = [];
-        for (const s of (servers || [])) {
-          if (!s) continue;
-          let urls = s.urls;
-          if (typeof urls === 'string') urls = urls.trim();
-          if (Array.isArray(urls)) urls = urls.map(x => String(x||'').trim()).filter(Boolean);
-          if (typeof urls === 'string' && !urls) continue;
-          if (Array.isArray(urls) && urls.length === 0) continue;
-          const entry = { ...s, urls };
-          out.push(entry);
-        }
-        return out;
-      };
-
-      // Safari/iOS 會因為 iceServers 裡任一條 URL 不被接受而直接丟 "Bad configuration parameters"。
-      // 這裡先清理，再做一次「試建 RTCPeerConnection」的保守降級。
-      let iceServers = sanitizeIceServers([...turnServers, ...stunServers]);
-
-      try {
-        // Probe
-        const pc = new RTCPeerConnection({
-          iceServers,
-          iceTransportPolicy: cfg.relayOnly ? 'relay' : 'all',
-        });
-        pc.close();
-      } catch (e) {
-        // Fallback to minimal set
-        iceServers = sanitizeIceServers([
-          ...turnServers,
-          { urls: 'stun:stun.l.google.com:19302' },
-        ]);
-      }
-
-      const opts = {
-        debug: 1,
-        config: {
-          iceServers,
-          // If TURN not enabled, never force relay (would stall ICE)
-          iceTransportPolicy: (cfg.useTurn && cfg.relayOnly) ? 'relay' : 'all',
-        }
-      };
-
-      return opts;
-    }
-
-    // -------------------- TURN test --------------------
-    function setTurnTestStatus(text, ok=null) {
-      const eln = $('turnTestStatus');
-      if (!eln) return;
-      eln.textContent = text;
-      eln.className = 'text-[11px] ' + (ok === true
-        ? 'text-emerald-200'
-        : (ok === false ? 'text-rose-200' : 'text-emerald-100/70'));
-    }
-
-    async function testTurnServer(cfgOverride=null) {
-      const cfg = cfgOverride || loadNetConfig();
-      const url = String(cfg.turnUrl || '').trim();
-      if (!url) {
-        setTurnTestStatus('TURN 測試：未填 TURN URL', false);
-        toast('請先填入 TURN URL');
-        return;
-      }
-
-      // Some providers require UDP/TCP variants; test both.
-      const urls = [url];
-      if (!url.includes('transport=')) urls.push(url + '?transport=tcp');
-
-      setTurnTestStatus('TURN 測試：進行中…（正在收集 relay candidate）');
-
-      const pc = new RTCPeerConnection({
-        iceServers: [{
-          urls,
-          username: String(cfg.turnUser || ''),
-          credential: String(cfg.turnPass || ''),
-        }],
-        iceTransportPolicy: 'relay',
-      });
-
-      let relayCandidate = null;
-      let gatheredAny = false;
-
-      try {
-        // Create a data channel so ICE gathering starts.
-        pc.createDataChannel('t');
-
-        pc.onicecandidate = (ev) => {
-          if (!ev.candidate) return;
-          gatheredAny = true;
-          const cand = ev.candidate.candidate || '';
-          // Typical candidate line contains: "typ relay"
-          if (cand.includes(' typ relay')) {
-            relayCandidate = cand;
-          }
-        };
-
-        // Kick off ICE.
-        const offer = await pc.createOffer({offerToReceiveAudio:false, offerToReceiveVideo:false});
-        await pc.setLocalDescription(offer);
-
-        const startedAt = Date.now();
-        const timeoutMs = 8000;
-        while (Date.now() - startedAt < timeoutMs) {
-          if (relayCandidate) break;
-          if (pc.iceGatheringState === 'complete') break;
-          await new Promise(r => setTimeout(r, 120));
-        }
-
-        if (relayCandidate) {
-          setTurnTestStatus('TURN 測試：成功（已取得 relay candidate）', true);
-          toast('TURN 可用：已取得 relay candidate');
-          log('TURN test OK: ' + relayCandidate);
-        } else {
-          const state = pc.iceGatheringState;
-          const hint = gatheredAny
-            ? `未取得 relay candidate（iceGatheringState=${state}）。可能帳密/權限不正確或伺服器不允許中繼。`
-            : `未收到任何 candidate（iceGatheringState=${state}）。可能 URL/port 被封鎖或伺服器無回應。`;
-          setTurnTestStatus('TURN 測試：失敗（無 relay candidate）', false);
-          toast('TURN 測試失敗：無 relay candidate');
-          log('TURN test failed: ' + hint);
-        }
-      } catch (e) {
-        const msg = e?.message || String(e);
-        setTurnTestStatus('TURN 測試：錯誤（' + msg + '）', false);
-        toast('TURN 測試錯誤：' + msg);
-        log('TURN test error: ' + msg);
-      } finally {
-        try { pc.close(); } catch {}
-      }
-    }
-
     function wireConn(conn, incomingToHost=false) {
       conn.on('open', () => {
         if (isHost && incomingToHost) {
@@ -4344,7 +4106,7 @@ function eval3NoJoker(cards) {
           } else {
             toast(type.includes('peer-unavailable')
               ? '房間不存在或房主尚未上線'
-              : ('連線錯誤：' + type + '（可嘗試：離開/重置後再加入；跨網請測試/設定 TURN）'));
+              : ('連線錯誤：' + type + '（可嘗試：離開/重置後再加入）'));
           }
         }
       });
@@ -4372,7 +4134,7 @@ function eval3NoJoker(cards) {
           try { renderTableSeats(); } catch {}
           log('與房主連線已關閉');
           if (wasJoining) {
-            toast('連線被關閉：可能房主不在線/房號錯誤，或 ICE 無法打通（跨網/NAT 請測試 TURN）');
+            toast('連線被關閉：可能房主不在線、房號錯誤，或網路環境無法建立連線');
           } else if (wasConnected && !clientState.waitingForHost) {
             toast('連線中斷，嘗試自動重連…');
             scheduleClientReconnect('conn-close');
@@ -7261,13 +7023,6 @@ async function revealRound() {
     });
 
     $('btnCreateRoom').addEventListener('click', () => {
-      // Persist TURN toggle
-      try {
-        const cfg = loadNetConfig();
-        cfg.useTurn = !!$('chkUseTurn')?.checked;
-        saveNetConfig(cfg);
-      } catch {}
-
       // Use inpRoomId as optional custom room id (create)
       try {
         let v = ($('inpRoomId')?.value || '').trim();
@@ -7281,13 +7036,6 @@ async function revealRound() {
     });
 
     $('btnJoinRoom').addEventListener('click', () => {
-      // Persist TURN toggle
-      try {
-        const cfg = loadNetConfig();
-        cfg.useTurn = !!$('chkUseTurn')?.checked;
-        saveNetConfig(cfg);
-      } catch {}
-
       let rid = ($('inpRoomId').value || '').trim();
       
       // 原本是： if (!rid) return toast('請輸入房間號');
@@ -7340,57 +7088,6 @@ async function revealRound() {
       e.preventDefault();
       applyAppUpdate();
     });
-
-    // Advanced net config
-    const chkUseTurnEl = $('chkUseTurn');
-    if (chkUseTurnEl) {
-      chkUseTurnEl.addEventListener('change', () => {
-        try {
-          const cfg = loadNetConfig();
-          cfg.useTurn = !!chkUseTurnEl.checked;
-          saveNetConfig(cfg);
-        } catch {}
-      });
-    }
-
-    const btnSaveNet = $('btnSaveNet');
-    const btnClearNet = $('btnClearNet');
-    const btnTestTurn = $('btnTestTurn');
-    if (btnSaveNet) {
-      btnSaveNet.addEventListener('click', () => {
-        const cfg = {
-          useTurn: !!$('chkUseTurn')?.checked,
-          turnUrl: ($('inpTurnUrl')?.value || '').trim(),
-          turnUser: ($('inpTurnUser')?.value || '').trim(),
-          turnPass: ($('inpTurnPass')?.value || '').trim(),
-          relayOnly: !!$('chkRelayOnly')?.checked,
-        };
-        saveNetConfig(cfg);
-        setTurnTestStatus('TURN 測試：尚未測試');
-        toast('已儲存進階連線設定（請離開/重置後再重新連線）');
-      });
-    }
-    if (btnClearNet) {
-      btnClearNet.addEventListener('click', () => {
-        saveNetConfig({ ...DEFAULT_NET_CONFIG });
-        applyNetConfigToUI();
-        setTurnTestStatus('TURN 測試：尚未測試');
-        toast('已恢復預設 TURN（請離開/重置後再重新連線）');
-      });
-    }
-    if (btnTestTurn) {
-      btnTestTurn.addEventListener('click', () => {
-        // Read current UI first so user doesn't have to press save.
-        const cfg = {
-          useTurn: true, // testing TURN implies enable
-          turnUrl: ($('inpTurnUrl')?.value || '').trim(),
-          turnUser: ($('inpTurnUser')?.value || '').trim(),
-          turnPass: ($('inpTurnPass')?.value || '').trim(),
-          relayOnly: true, // force relay for test
-        };
-        testTurnServer(cfg);
-      });
-    }
 
     $('btnApplyRounds').addEventListener('click', () => {
       if (!isHost) return;
@@ -7664,9 +7361,6 @@ async function revealRound() {
       } catch (e) {
         dlog('PWA: init error: ' + (e?.message || e));
       }
-
-      applyNetConfigToUI();
-      setTurnTestStatus('TURN 測試：尚未測試');
 
       // BB mode (disable arrange timer) load
       try {
