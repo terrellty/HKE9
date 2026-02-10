@@ -1,6 +1,6 @@
 {
   "roomId": "MON",
-  "updatedAt": "2026-02-10T12:40:24.389Z",
+  "updatedAt": "2026-02-10T12:40:29.229Z",
   "periodKey": "2026-02",
   "scoresByName": {
     "戒賭人生": 126,
@@ -13,6 +13,7 @@
     "Johnny": -101,
     "RD7": -999,
     "Wing": -3,
-    "Test": 0
+    "Test": 0,
+    "Test2": 0
   }
 }
