@@ -781,7 +781,7 @@
           <div>
             <div class="text-xs text-emerald-100/70">計分版</div>
             <div class="mt-1 text-lg font-black tracking-tight">DAY / MONTH</div>
-            <div class="mt-1 text-xs text-emerald-100/70">資料來源：Render API（PostgreSQL）優先，失敗時回退 GitHub records（只顯示累計）</div>
+            <div class="mt-1 text-xs text-emerald-100/70">資料來源：Render API（PostgreSQL）</div>
           </div>
           <div class="flex items-center gap-2">
             <button id="btnScoreboardRefresh" class="text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10">重新載入</button>
@@ -3589,21 +3589,11 @@ function eval3NoJoker(cards) {
       waitingForHost: false,
     };
 
-    // -------------------- Persisted room record (DAY/MON) via Render API(PostgreSQL) + fallback GitHub/Worker --------------------
+    // -------------------- Persisted room record (DAY/MON) via Render API(PostgreSQL) --------------------
     // Goal: DAY/MON rooms share a persistent scoreboard across devices.
     // Read/Write preferred path: Render relay API (/records/:roomId and /save, backed by PostgreSQL).
-    // Fallback path: GitHub JSON + Cloudflare Worker.
-    // Fallback: always cache to localStorage so the host device can recover even if worker fails.
 
     const PERSIST_ROOM_IDS = new Set(['DAY','MON']);
-
-    // Where to store records in the GitHub repo
-    const PERSIST_REPO = {
-      owner: 'hketerrell',
-      repo: 'HKE9',
-      branch: 'main',
-      dir: 'records',
-    };
 
     // Cloudflare Worker endpoint. You can override at runtime via localStorage:
     //   localStorage.setItem('ninePokerPersistWorkerUrl', 'https://<your-worker>.workers.dev');
@@ -3625,10 +3615,6 @@ function eval3NoJoker(cards) {
       return PERSIST_ROOM_IDS.has(s);
     }
 
-    function persistKey(roomId, k) {
-      return `ninePokerPersist_${String(roomId||'').toUpperCase()}_${k}`;
-    }
-
     function persistWorkerUrl() {
       try {
         const v = localStorage.getItem('ninePokerPersistWorkerUrl');
@@ -3643,29 +3629,6 @@ function eval3NoJoker(cards) {
         return (localStorage.getItem('ninePokerPersistSecret') || '').trim();
       } catch {
         return '';
-      }
-    }
-
-    function githubRawRecordUrl(roomId) {
-      const rid = String(roomId||'').trim().toUpperCase();
-      const {owner, repo, branch, dir} = PERSIST_REPO;
-      return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dir}/${encodeURIComponent(rid)}.json?bust=${Date.now()}`;
-    }
-
-    async function githubReadRecord(roomId) {
-      const url = githubRawRecordUrl(roomId);
-      try {
-        const res = await fetch(url, { cache: 'no-store' });
-        if (res.status === 404) return null;
-        if (!res.ok) {
-          const txt = await res.text().catch(()=> '');
-          dlog(`Persist(GH): read failed (${res.status}) ${roomId}: ${txt.slice(0,140)}`);
-          return null;
-        }
-        return await res.json();
-      } catch (e) {
-        dlog(`Persist(GH): read error ${roomId}: ${e?.message || e}`);
-        return null;
       }
     }
 
@@ -3690,9 +3653,7 @@ function eval3NoJoker(cards) {
     }
 
     async function persistReadRecord(roomId) {
-      const fromApi = await serverReadRecord(roomId);
-      if (fromApi) return fromApi;
-      return await githubReadRecord(roomId);
+      return await serverReadRecord(roomId);
     }
 
     async function workerWriteRecord(roomId, record) {
@@ -3840,13 +3801,6 @@ function eval3NoJoker(cards) {
       refreshPersistScoresByNameFromCumulative();
       const record = buildPersistRecordPayload();
 
-      try {
-        localStorage.setItem(persistKey(rid,'record'), JSON.stringify({scoresByName: record.scoresByName}));
-        dlog(`Persist(Local): saved cache for ${rid} (names=${Object.keys(record.scoresByName||{}).length})${reason ? ` | ${reason}` : ''}`);
-      } catch (e) {
-        dlog(`Persist(Local): cache write failed for ${rid}: ${e?.message || e}`);
-      }
-
       await workerWriteRecord(rid, record);
     }
 
@@ -3864,26 +3818,12 @@ function eval3NoJoker(cards) {
       persistState.roomId = rid;
       try { dlog(`Persist: enabled for ${rid} | worker=${persistWorkerUrl()}`); } catch {}
 
-      // 1) local cache first
-      try {
-        const cached = localStorage.getItem(persistKey(rid,'record'));
-        if (cached) {
-          const json = JSON.parse(cached);
-          if (json && typeof json === 'object') {
-            persistState.scoresByName = json.scoresByName || {};
-            dlog(`Persist(Local): loaded local cache for ${rid}`);
-          }
-        }
-      } catch {}
-
-      // 2) GitHub raw (public)
-      const remote = await githubReadRecord(rid);
+      const remote = await persistReadRecord(rid);
       if (remote && typeof remote === 'object') {
-        persistState.scoresByName = remote.scoresByName || persistState.scoresByName || {};
-        try { localStorage.setItem(persistKey(rid,'record'), JSON.stringify({scoresByName: persistState.scoresByName})); } catch {}
-        dlog(`Persist(GH): loaded GitHub record for ${rid}`);
+        persistState.scoresByName = remote.scoresByName || {};
+        dlog(`Persist(API): loaded server record for ${rid}`);
       } else {
-        dlog(`Persist(GH): no GitHub record found for ${rid} (expected /${PERSIST_REPO.dir}/${rid}.json)`);
+        dlog(`Persist(API): no server record found for ${rid}`);
       }
 
       applyPersistScoresToClientCumulative();
@@ -3909,15 +3849,6 @@ function eval3NoJoker(cards) {
       refreshPersistScoresByNameFromCumulative();
       const record = buildPersistRecordPayload();
 
-      // Always cache locally (works offline)
-      try {
-        localStorage.setItem(persistKey(rid,'record'), JSON.stringify({scoresByName: record.scoresByName}));
-        dlog(`Persist(Local): saved cache for ${rid} (names=${Object.keys(record.scoresByName||{}).length})`);
-      } catch (e) {
-        dlog(`Persist(Local): cache write failed for ${rid}: ${e?.message || e}`);
-      }
-
-      // Best-effort cloud save via worker
       await workerWriteRecord(rid, record);
     }
 
@@ -3953,10 +3884,6 @@ function eval3NoJoker(cards) {
         scoresByName: persistState.scoresByName || {},
       };
 
-      try {
-        localStorage.setItem(persistKey(rid,'record'), JSON.stringify({scoresByName: record.scoresByName}));
-      } catch {}
-
       const ok = await workerWriteRecord(rid, record);
       if (ok && roundNum > 0) persistState.lastSavedRound = roundNum;
     }
@@ -3971,19 +3898,9 @@ function eval3NoJoker(cards) {
       const roomId = resolveLobbyPersistRoomId();
       const now = new Date().toISOString();
       let record = { roomId, updatedAt: now, scoresByName: {} };
-      try {
-        const cached = localStorage.getItem(persistKey(roomId,'record'));
-        if (cached) {
-          const json = JSON.parse(cached);
-          if (json && typeof json === 'object') {
-            record.scoresByName = json.scoresByName || {};
-          }
-        }
-      } catch {}
-
-      const remote = await githubReadRecord(roomId);
+      const remote = await persistReadRecord(roomId);
       if (remote && typeof remote === 'object') {
-        record.scoresByName = remote.scoresByName || record.scoresByName || {};
+        record.scoresByName = remote.scoresByName || {};
       }
 
       const prev = String(prevName || '').trim();
@@ -4001,10 +3918,6 @@ function eval3NoJoker(cards) {
         scores[next] = 0;
       }
       record = { ...record, roomId, updatedAt: now, scoresByName: scores };
-
-      try {
-        localStorage.setItem(persistKey(roomId,'record'), JSON.stringify({scoresByName: record.scoresByName}));
-      } catch {}
 
       await workerWriteRecord(roomId, record);
     }
