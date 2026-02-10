@@ -3615,6 +3615,7 @@ function eval3NoJoker(cards) {
       enabled: false,
       roomId: '',
       scoresByName: {}, // {name: number}
+      lastSavedRound: 0,
       // NOTE: We intentionally do NOT keep per-round history for DAY/MON.
       // Only cumulative totals are stored.
     };
@@ -3710,6 +3711,21 @@ function eval3NoJoker(cards) {
       hostState.cumulative[pid] = v;
     }
 
+    function applyPersistScoresToClientCumulative() {
+      if (!persistState.enabled) return;
+      const map = {};
+      if (hostId) {
+        const hn = String(clientState.hostName || '').trim();
+        if (hn) map[hostId] = Number(persistState.scoresByName?.[hn] || 0);
+      }
+      for (const pid in (clientState.players || {})) {
+        const nm = String(clientState.players[pid]?.name || '').trim();
+        if (!nm) continue;
+        map[pid] = Number(persistState.scoresByName?.[nm] || 0);
+      }
+      clientState.cumulative = map;
+    }
+
     function refreshPersistScoresByNameFromCumulative() {
       if (!persistState.enabled) return;
       // IMPORTANT: merge into existing scores so absent players won't be erased.
@@ -3784,6 +3800,7 @@ function eval3NoJoker(cards) {
         persistState.enabled = false;
         persistState.roomId = '';
         persistState.scoresByName = {};
+        persistState.lastSavedRound = 0;
         return false;
       }
 
@@ -3813,6 +3830,11 @@ function eval3NoJoker(cards) {
         dlog(`Persist(GH): no GitHub record found for ${rid} (expected /${PERSIST_REPO.dir}/${rid}.json)`);
       }
 
+      applyPersistScoresToClientCumulative();
+      try { renderPlayers(); } catch {}
+      try { renderTableSeats(); } catch {}
+      try { updateMyCumulative(); } catch {}
+
       return true;
     }
 
@@ -3841,6 +3863,40 @@ function eval3NoJoker(cards) {
 
       // Best-effort cloud save via worker
       await workerWriteRecord(rid, record);
+    }
+
+    async function maybeSavePersistRecordFromClientReveal(msg) {
+      if (!persistState.enabled) return;
+      if (isHost) return;
+      const rid = persistState.roomId;
+      if (!isPersistRoomId(rid)) return;
+      const roundNum = Number(msg?.round || 0);
+      if (roundNum > 0 && persistState.lastSavedRound >= roundNum) return;
+
+      const merged = { ...(persistState.scoresByName || {}) };
+      if (hostId) {
+        const hostNm = String(clientState.hostName || '').trim();
+        if (hostNm) merged[hostNm] = Number(clientState.cumulative?.[hostId] || 0);
+      }
+      for (const pid in (clientState.players || {})) {
+        const nm = String(clientState.players[pid]?.name || '').trim();
+        if (!nm) continue;
+        merged[nm] = Number(clientState.cumulative?.[pid] || 0);
+      }
+      persistState.scoresByName = merged;
+
+      const record = {
+        roomId: rid,
+        updatedAt: new Date().toISOString(),
+        scoresByName: persistState.scoresByName || {},
+      };
+
+      try {
+        localStorage.setItem(persistKey(rid,'record'), JSON.stringify({scoresByName: record.scoresByName}));
+      } catch {}
+
+      const ok = await workerWriteRecord(rid, record);
+      if (ok && roundNum > 0) persistState.lastSavedRound = roundNum;
     }
 
     function resolveLobbyPersistRoomId() {
@@ -3916,6 +3972,7 @@ function eval3NoJoker(cards) {
         persistState.roomId = '';
         persistState.fileId = null;
         persistState.scoresByName = {};
+        persistState.lastSavedRound = 0;
       } catch {}
       try { stopHostHeartbeat(); } catch {}
       try { stopClientHeartbeat(); } catch {}
@@ -4647,6 +4704,7 @@ function eval3NoJoker(cards) {
         if (Array.isArray(msg.seatOrder)) clientState.seatOrder = msg.seatOrder.slice();
         clientState.settings = msg.settings || clientState.settings;
         clientState.cumulative = msg.cumulative || clientState.cumulative || {};
+        try { applyPersistScoresToClientCumulative(); } catch {}
         $('inpRounds').value = clientState.settings.roundsTotal;
         try { $('chkBBMode').checked = !!clientState.settings.bbMode; } catch {}
 
@@ -4673,6 +4731,7 @@ function eval3NoJoker(cards) {
         hostId = msg.hostId || hostId;
         if (msg.hostName) clientState.hostName = String(msg.hostName || '房主');
         if (Array.isArray(msg.seatOrder)) clientState.seatOrder = msg.seatOrder.slice();
+        try { applyPersistScoresToClientCumulative(); } catch {}
         renderPlayers();
         try { renderTableSeats(); } catch {}
         return;
@@ -4828,6 +4887,7 @@ function eval3NoJoker(cards) {
             openGameOverModal(payload);
           }, 1600);
         }
+        try { maybeSavePersistRecordFromClientReveal(msg).catch(()=>{}); } catch {}
         return;
       }
 
