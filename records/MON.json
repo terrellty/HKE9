@@ -1,18 +1,18 @@
 {
   "roomId": "MON",
-  "updatedAt": "2026-02-10T09:34:43.893Z",
+  "updatedAt": "2026-02-10T09:35:38.201Z",
   "periodKey": "2026-02",
   "scoresByName": {
     "戒賭人生": 126,
-    "Nicky": 79,
+    "Nicky": 157,
     "小明": -110,
-    "RD": -280,
+    "RD": -296,
     "WING": -15,
     "Ginna": 128,
-    "B": 27,
-    "AW27": 76,
-    "Johnny": -61,
+    "B": 11,
+    "AW27": 62,
+    "Johnny": -77,
     "RD7": -999,
-    "Wing": -21
+    "Wing": -37
   }
 }
