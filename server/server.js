@@ -284,7 +284,8 @@ function resolveReveal(room) {
 
   const dealerId = scoreData.dealerId;
   for (const id of ids) {
-    room.cumulative[id] = Number(room.cumulative[id] || 0) + Number(scoreData.results[id] || 0);
+    const roundTotal = Number(scoreData.results?.[id]?.total || 0);
+    room.cumulative[id] = Number(room.cumulative[id] || 0) + roundTotal;
   }
 
   room.revealed = true;
