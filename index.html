@@ -1884,6 +1884,7 @@
       tab: 'MON',
       cache: { MON: null },
       loading: false,
+      reloadAfterLoading: false,
     };
 
     function setScoreboardTab(tab) {
@@ -1955,7 +1956,10 @@
     }
 
     async function loadScoreboard(force=false) {
-      if (scoreboardState.loading) return;
+      if (scoreboardState.loading) {
+        if (force) scoreboardState.reloadAfterLoading = true;
+        return;
+      }
       scoreboardState.loading = true;
       setScoreboardStatus('載入中…');
       try {
@@ -1971,6 +1975,36 @@
         renderScoreboardTable();
       } finally {
         scoreboardState.loading = false;
+        if (scoreboardState.reloadAfterLoading) {
+          scoreboardState.reloadAfterLoading = false;
+          loadScoreboard(true);
+        }
+      }
+    }
+
+    function normalizePlayerName(raw) {
+      return String(raw || '').slice(0, 20).trim() || '玩家';
+    }
+
+    function normalizeNameCompare(raw) {
+      return String(raw || '').trim().toLowerCase();
+    }
+
+    async function hasMonRenameConflict(nextName, currentName = '') {
+      const nextKey = normalizeNameCompare(nextName);
+      if (!nextKey) return false;
+      const currentKey = normalizeNameCompare(currentName);
+      if (nextKey === currentKey) return false;
+
+      try {
+        const mon = await fetchScoreboard('MON');
+        const scores = (mon && typeof mon === 'object' && mon.scoresByName && typeof mon.scoresByName === 'object')
+          ? mon.scoresByName
+          : {};
+        return Object.keys(scores).some(name => normalizeNameCompare(name) === nextKey);
+      } catch (e) {
+        dlog(`MON rename check failed: ${e?.message || e}`);
+        return false;
       }
     }
 
@@ -3997,8 +4031,8 @@ function eval3NoJoker(cards) {
 
 
     function ensureName() {
-      const nm = $('inpName').value.trim();
-      clientState.myName = nm || '玩家';
+      const nm = normalizePlayerName($('inpName').value);
+      clientState.myName = nm;
       localStorage.setItem('ninePokerName', clientState.myName);
       $('inpName').value = clientState.myName;
     }
@@ -4519,23 +4553,33 @@ function eval3NoJoker(cards) {
       }
 
       if (msg.t === 'rename') {
-        const pid = conn.peer;
-        const next = String(msg.name || '玩家').slice(0, 20).trim() || '玩家';
-        const player = hostState.players[pid];
-        if (!player) return;
-        const prev = player.name;
-        if (prev === next) return;
-        player.name = next;
-        try {
-          if (persistState.enabled) {
-            applyPersistNameChange(prev, next, hostState.cumulative[pid] || 0);
-            savePersistRecordNow('rename');
+        (async () => {
+          const pid = conn.peer;
+          const next = normalizePlayerName(msg.name);
+          const player = hostState.players[pid];
+          if (!player) return;
+          const prev = player.name;
+          if (prev === next) return;
+
+          const monConflict = await hasMonRenameConflict(next, prev);
+          if (monConflict) {
+            send(conn, { t:'error', message:`名稱「${next}」已存在於 MON.json，請使用其他名稱` });
+            log(`拒絕改名（MON.json 已有同名）：${prev} -> ${next}`);
+            return;
           }
-        } catch {}
-        broadcastPlayers();
-        renderPlayers();
-        try { renderTableSeats(); } catch {}
-        log(`玩家改名：${prev} -> ${next}`);
+
+          player.name = next;
+          try {
+            if (persistState.enabled) {
+              applyPersistNameChange(prev, next, hostState.cumulative[pid] || 0);
+              savePersistRecordNow('rename');
+            }
+          } catch {}
+          broadcastPlayers();
+          renderPlayers();
+          try { renderTableSeats(); } catch {}
+          log(`玩家改名：${prev} -> ${next}`);
+        })();
         return;
       }
 
@@ -7097,10 +7141,23 @@ async function revealRound() {
     }
 
     // -------------------- Event bindings --------------------
-    $('btnSaveName').addEventListener('click', () => {
+    $('btnSaveName').addEventListener('click', async () => {
       const prevName = clientState.myName;
-      ensureName();
-      const nextName = clientState.myName;
+      const nextName = normalizePlayerName($('inpName').value);
+
+      if (prevName !== nextName) {
+        const monConflict = await hasMonRenameConflict(nextName, prevName);
+        if (monConflict) {
+          $('inpName').value = prevName || '玩家';
+          toast(`名稱「${nextName}」已存在於 MON.json，請改用其他名稱`);
+          return;
+        }
+      }
+
+      clientState.myName = nextName;
+      localStorage.setItem('ninePokerName', clientState.myName);
+      $('inpName').value = clientState.myName;
+
       if (prevName !== nextName) {
         if (isHost) {
           try {
