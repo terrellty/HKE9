@@ -464,7 +464,7 @@
 
         <!-- small status line (kiosk) -->
         <div class="absolute left-2 bottom-2 text-[11px] text-emerald-100/70">
-          <span id="foulHint">擺烏龍：頭 &gt; 中 或 中 &gt; 尾（允許提交；結算時處理）</span>
+          <span id="foulHint"></span>
           <span class="mx-2">｜</span>
           你的提交：<span id="submitStatus" class="text-emerald-50/80">尚未提交</span>
         </div>
@@ -784,14 +784,14 @@
                     <option value="allBlack">全黑 +5</option>
                     <option value="threeSnake">三蛇 +3</option>
                     <option value="fourKind">4條 +10</option>
-                    <option value="fourPairs">4對 +10</option>
+                    <option value="fourPairs">4對子 +10</option>
                     <option value="mixedDragon">雜龍 +15</option>
                     <option value="threeStraightFlush">3同花順 +25</option>
                     <option value="twoFourKind">2個4條 +30</option>
                     <option value="greenDragon">青龍 +100</option>
                     <option value="noHand">百無 +3</option>
                 </select>
-                <button id="btnSubmit" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-600 text-black font-black text-sm shadow-lg hover:brightness-110 active:scale-95 transition-transform">
+                <button id="btnSubmit" class="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-600 text-black font-black text-sm shadow-lg hover:brightness-110 active:scale-95 transition-transform">
                   提交
                 </button>
              </div>
