@@ -195,6 +195,7 @@ const server = http.createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server });
 const HEARTBEAT_INTERVAL_MS = 15000;
+const HOST_RECONNECT_GRACE_MS = 30000;
 
 function markAlive(ws) {
   ws.isAlive = true;
@@ -244,6 +245,10 @@ wss.on('connection', (ws) => {
       }
       const existingRoom = rooms.get(roomId);
       if (existingRoom) {
+        if (existingRoom.hostDisconnectTimer) {
+          clearTimeout(existingRoom.hostDisconnectTimer);
+          existingRoom.hostDisconnectTimer = null;
+        }
         const canTakeOver =
           !!hostToken &&
           !!existingRoom.hostToken &&
@@ -274,6 +279,7 @@ wss.on('connection', (ws) => {
         hostName: name || '房主',
         hostSocket: ws,
         hostToken: hostToken || null,
+        hostDisconnectTimer: null,
         clients: new Map(),
       });
       ws.roomId = roomId;
@@ -343,9 +349,18 @@ wss.on('connection', (ws) => {
     if (ws.role === 'host') {
       room.hostSocket = null;
       room.hostId = null;
-      for (const client of room.clients.values()) {
-        send(client.socket, { t: 'host-left' });
+      if (room.hostDisconnectTimer) {
+        clearTimeout(room.hostDisconnectTimer);
       }
+      room.hostDisconnectTimer = setTimeout(() => {
+        room.hostDisconnectTimer = null;
+        const latestRoom = rooms.get(roomId);
+        if (!latestRoom || latestRoom.hostSocket) return;
+        for (const client of latestRoom.clients.values()) {
+          send(client.socket, { t: 'host-left' });
+        }
+        cleanRoom(roomId);
+      }, HOST_RECONNECT_GRACE_MS);
       cleanRoom(roomId);
       return;
     }
