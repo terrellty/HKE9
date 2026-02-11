@@ -6917,6 +6917,48 @@ async function revealRound() {
       }
     }
 
+    async function autoSubmitBeforeLeaveRoom() {
+      const hasCardsInRound = !!(clientState.cards9 && clientState.cards9.length);
+      if (!hasCardsInRound || clientState.submitted) return;
+
+      // BB mode keeps manual flow; leaving should not create an implicit submit.
+      const bb = !!(isHost ? hostState.settings.bbMode : clientState.settings.bbMode);
+      if (bb) return;
+
+      // If not complete yet, try no-foul first, then fallback to any valid 2/3/3 fill.
+      const arrangementReady = (() => {
+        try {
+          const { head, mid, tail } = clientState.arranged;
+          return !!(clientState.dealerCard && isAllFilled(head) && isAllFilled(mid) && isAllFilled(tail));
+        } catch {
+          return false;
+        }
+      })();
+
+      if (!arrangementReady) {
+        try { autoFillRandomNoFoul(); } catch {}
+      }
+
+      const stillNotReady = (() => {
+        try {
+          const { head, mid, tail } = clientState.arranged;
+          return !(clientState.dealerCard && isAllFilled(head) && isAllFilled(mid) && isAllFilled(tail));
+        } catch {
+          return true;
+        }
+      })();
+
+      if (stillNotReady) {
+        try { autoFillRandomAllowFoul(); } catch {}
+      }
+
+      try { $('selReport').value = 'none'; } catch {}
+      try { submitArrangement(); } catch {}
+
+      // Give relay a brief moment to flush submit before closing the room.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
     // -------------------- Connect flows --------------------
     let clientConn = null; // persistent connection from client -> host
 
@@ -7064,7 +7106,8 @@ async function revealRound() {
       joinRoom(rid);
     });
 
-    $('btnLeave').addEventListener('click', () => {
+    $('btnLeave').addEventListener('click', async () => {
+      await autoSubmitBeforeLeaveRoom();
       resetAll();
       showPage('lobby');
     });
@@ -7118,7 +7161,8 @@ async function revealRound() {
     $('btnStartGame').addEventListener('click', () => startGame());
 
     // Top-right: Exit room
-    $('btnGoLobby').addEventListener('click', () => {
+    $('btnGoLobby').addEventListener('click', async () => {
+      await autoSubmitBeforeLeaveRoom();
       resetAll();
       showPage('lobby');
     });
