@@ -396,6 +396,7 @@ function getRoom(roomId) {
       roomId: id,
       clients: new Map(),
       seatOrder: [],
+      disconnectedSeatNames: {},
       cumulative: {},
       cumulativeByName: {},
       recordLoaded: false,
@@ -440,12 +441,34 @@ function roomPlayers(room) {
   const out = [];
   for (const id of room.seatOrder) {
     const p = room.clients.get(id);
-    if (p) out.push({ id, name: p.name || '玩家' });
+    if (p) {
+      out.push({ id, name: p.name || '玩家', connected: true });
+      continue;
+    }
+    const offlineName = String(room.disconnectedSeatNames?.[id] || '').trim();
+    if (offlineName) out.push({ id, name: offlineName, connected: false });
   }
   for (const [id, p] of room.clients.entries()) {
-    if (!out.find((x) => x.id === id)) out.push({ id, name: p.name || '玩家' });
+    if (!out.find((x) => x.id === id)) out.push({ id, name: p.name || '玩家', connected: true });
   }
   return out;
+}
+
+function pruneDisconnectedSeats(room) {
+  const keep = [];
+  for (const id of room.seatOrder) {
+    if (room.clients.has(id)) {
+      keep.push(id);
+      continue;
+    }
+    delete room.dealt[id];
+    delete room.submissions[id];
+    delete room.nextReadyMap[id];
+    delete room.preStartReadyMap[id];
+    delete room.cumulative[id];
+    delete room.disconnectedSeatNames[id];
+  }
+  room.seatOrder = keep;
 }
 
 function relayToRoom(room, payload, exceptId = null) {
@@ -457,8 +480,24 @@ function relayToRoom(room, payload, exceptId = null) {
 
 function currentRoundPlayerIds(room) {
   const dealtIds = Object.keys(room.dealt || {});
+  if (room.started && !room.revealed && dealtIds.length) {
+    return dealtIds.sort();
+  }
   if (!dealtIds.length) return room.seatOrder.filter((id) => room.clients.has(id));
   return room.seatOrder.filter((id) => room.clients.has(id) && room.dealt[id]);
+}
+
+function buildAutoSubmission(cards9) {
+  if (!Array.isArray(cards9) || cards9.length !== 9) return null;
+  const cards = cards9.map((card) => normalizeCard(card)).filter(Boolean);
+  if (cards.length !== 9) return null;
+  return {
+    dealerCard: cards[0],
+    head: cards.slice(1, 3),
+    mid: cards.slice(3, 6),
+    tail: cards.slice(6, 9),
+    report: 'none',
+  };
 }
 
 function broadcastPlayers(room) {
@@ -511,6 +550,8 @@ function maybeStartNextRound(room) {
   const nextReadyIds = currentRoundPlayerIds(room);
   const allReady = nextReadyIds.length > 0 && nextReadyIds.every((id) => room.nextReadyMap[id]);
   if (!allReady) return;
+  pruneDisconnectedSeats(room);
+  broadcastPlayers(room);
   relayToRoom(room, { t: 'nextRound', round: room.round + 1 });
   dealRound(room);
 }
@@ -663,6 +704,7 @@ wss.on('connection', (ws) => {
       ws.roomId = roomId;
       const playerName = String(msg.name || '玩家').trim() || '玩家';
       room.clients.set(ws.id, { socket: ws, name: playerName });
+      delete room.disconnectedSeatNames[ws.id];
       if (!room.seatOrder.includes(ws.id)) room.seatOrder.push(ws.id);
       room.preStartReadyMap[ws.id] = false;
       if (room.cumulative[ws.id] === undefined && room.cumulativeByName[playerName] !== undefined) {
@@ -822,13 +864,32 @@ wss.on('connection', (ws) => {
       room.cumulativeByName[closedName] = Number(room.cumulative[ws.id] || 0);
     }
 
+    const leftDuringRound = !!(room.started && !room.revealed && room.dealt[ws.id]);
+
+    if (leftDuringRound && !room.submissions[ws.id]) {
+      const autoSub = buildAutoSubmission(room.dealt[ws.id]?.all9);
+      if (autoSub) {
+        room.submissions[ws.id] = autoSub;
+      }
+    }
+
     room.clients.delete(ws.id);
-    room.seatOrder = room.seatOrder.filter((id) => id !== ws.id);
-    delete room.dealt[ws.id];
-    delete room.submissions[ws.id];
+
+    if (leftDuringRound) {
+      room.disconnectedSeatNames[ws.id] = closedName || '玩家';
+    } else {
+      room.seatOrder = room.seatOrder.filter((id) => id !== ws.id);
+      delete room.disconnectedSeatNames[ws.id];
+    }
+
+    if (!leftDuringRound) {
+      delete room.dealt[ws.id];
+      delete room.submissions[ws.id];
+      delete room.cumulative[ws.id];
+    }
+
     delete room.nextReadyMap[ws.id];
     delete room.preStartReadyMap[ws.id];
-    delete room.cumulative[ws.id];
 
     broadcastPlayers(room);
     if (!room.started) {
@@ -836,6 +897,14 @@ wss.on('connection', (ws) => {
       for (const id of room.seatOrder) ready[id] = !!room.preStartReadyMap[id];
       relayToRoom(room, { t: 'ready', ready });
     }
+
+    if (leftDuringRound) {
+      const ready = {};
+      for (const id of currentRoundPlayerIds(room)) ready[id] = !!room.submissions[id];
+      relayToRoom(room, { t: 'ready', ready });
+      startDealerPickOrReveal(room);
+    }
+
     maybeStartNextRound(room);
     cleanRoom(roomId);
   });
