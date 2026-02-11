@@ -1,4 +1,6 @@
 const http = require('http');
+const fs = require('fs/promises');
+const path = require('path');
 const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
 const { Pool } = require('pg');
@@ -56,6 +58,33 @@ async function readRecord(roomId) {
     ...(row.record || {}),
     updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at || ''),
   };
+}
+
+async function readRecordFromFile(roomId) {
+  const filePath = path.resolve(__dirname, '..', 'records', `${roomId}.json`);
+  let raw;
+  try {
+    raw = await fs.readFile(filePath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  return {
+    roomId,
+    ...parsed,
+  };
+}
+
+async function readAnyRecord(roomId) {
+  if (hasRecordsDb()) return readRecord(roomId);
+  return readRecordFromFile(roomId);
 }
 
 async function writeRecord(roomId, record) {
@@ -369,6 +398,7 @@ function getRoom(roomId) {
       seatOrder: [],
       cumulative: {},
       cumulativeByName: {},
+      recordLoaded: false,
       settings: { roundsTotal: 0, bbMode: false },
       round: 0,
       started: false,
@@ -380,6 +410,28 @@ function getRoom(roomId) {
     });
   }
   return rooms.get(id);
+}
+
+async function ensureRoomRecordLoaded(room) {
+  if (!room || room.recordLoaded) return;
+  const recordRoomId = normalizeRecordRoomId(room.roomId);
+  room.recordLoaded = true;
+  if (!recordRoomId) return;
+
+  try {
+    const record = await readAnyRecord(recordRoomId);
+    const scoresByName = record?.scoresByName;
+    if (!scoresByName || typeof scoresByName !== 'object') return;
+
+    room.cumulativeByName = { ...room.cumulativeByName };
+    for (const [name, value] of Object.entries(scoresByName)) {
+      const key = String(name || '').trim();
+      if (!key) continue;
+      room.cumulativeByName[key] = Number(value || 0);
+    }
+  } catch (error) {
+    console.error(`Failed to load persisted record for room ${recordRoomId}:`, error?.message || error);
+  }
 }
 
 function roomPlayers(room) {
@@ -531,7 +583,7 @@ wss.on('connection', (ws) => {
 
   ws.on('pong', () => markAlive(ws));
 
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     let msg;
     try {
       msg = JSON.parse(raw.toString());
@@ -549,6 +601,7 @@ wss.on('connection', (ws) => {
         return;
       }
       const room = getRoom(roomId);
+      await ensureRoomRecordLoaded(room);
       ws.roomId = roomId;
       const playerName = String(msg.name || '玩家').trim() || '玩家';
       room.clients.set(ws.id, { socket: ws, name: playerName });
