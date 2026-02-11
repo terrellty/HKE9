@@ -4471,41 +4471,7 @@ function eval3NoJoker(cards) {
         updateMidActionButton();
 
         if (allSubmitted()) {
-          // If any dealerCard is Joker, start pre-reveal dealer-pick flow.
-          const controller = findDealerPickController(hostState.submissions);
-          if (controller) {
-            hostState.dealerPick = { ...controller, round: hostState.round, startedAt: Date.now() };
-            hostState.dealerOverride = null;
-            const ctx = {
-              t: 'dealerPickStart',
-              round: hostState.round,
-              controllerId: controller.controllerId,
-              kind: controller.kind,
-              submissions: sanitizeSubsForBroadcast(),
-              players: allPlayersForBroadcast(),
-            };
-            // Send only to controller (it might be host)
-            if (controller.controllerId === hostId) {
-              openDealerPickPreModal({
-                round: ctx.round,
-                kind: ctx.kind,
-                controllerId: ctx.controllerId,
-                submissions: ctx.submissions,
-                players: ctx.players,
-                currentDealerId: hostId,
-              });
-              toast('你持有鬼牌：請在結算前指定莊家');
-            } else {
-              const p = hostState.players[controller.controllerId];
-              if (p?.conn) send(p.conn, ctx);
-              toast('等待鬼牌玩家指定莊家…');
-              log(`等待 ${hostState.players[controller.controllerId]?.name || controller.controllerId} 指定莊家`);
-            }
-            return;
-          }
-
-          // No dealer-pick needed, reveal immediately.
-          revealRound();
+          startDealerPickOrRevealFlow();
         }
         return;
       }
@@ -5101,6 +5067,44 @@ function eval3NoJoker(cards) {
     function allSubmitted() {
       const ids = roundPlayerIds();
       return ids.every(id => !!hostState.submissions[id]);
+    }
+
+    function startDealerPickOrRevealFlow() {
+      if (!isHost) return;
+      if (!allSubmitted()) return;
+
+      const controller = findDealerPickController(hostState.submissions);
+      if (controller) {
+        hostState.dealerPick = { ...controller, round: hostState.round, startedAt: Date.now() };
+        hostState.dealerOverride = null;
+        const ctx = {
+          t: 'dealerPickStart',
+          round: hostState.round,
+          controllerId: controller.controllerId,
+          kind: controller.kind,
+          submissions: sanitizeSubsForBroadcast(),
+          players: allPlayersForBroadcast(),
+        };
+        if (controller.controllerId === hostId) {
+          openDealerPickPreModal({
+            round: ctx.round,
+            kind: ctx.kind,
+            controllerId: ctx.controllerId,
+            submissions: ctx.submissions,
+            players: ctx.players,
+            currentDealerId: hostId,
+          });
+          toast('你持有鬼牌：請在結算前指定莊家');
+        } else {
+          const p = hostState.players[controller.controllerId];
+          if (p?.conn) send(p.conn, ctx);
+          toast('等待鬼牌玩家指定莊家…');
+          log(`等待 ${hostState.players[controller.controllerId]?.name || controller.controllerId} 指定莊家`);
+        }
+        return;
+      }
+
+      revealRound();
     }
 
     // -------------------- Host validation & game logic --------------------
@@ -6883,37 +6887,7 @@ async function revealRound() {
         renderReadyList(rmap);
 
         if (allSubmitted()) {
-          const controller = findDealerPickController(hostState.submissions);
-          if (controller) {
-            hostState.dealerPick = { ...controller, round: hostState.round, startedAt: Date.now() };
-            hostState.dealerOverride = null;
-            const ctx = {
-              t: 'dealerPickStart',
-              round: hostState.round,
-              controllerId: controller.controllerId,
-              kind: controller.kind,
-              submissions: sanitizeSubsForBroadcast(),
-              players: allPlayersForBroadcast(),
-            };
-            if (controller.controllerId === hostId) {
-              openDealerPickPreModal({
-                round: ctx.round,
-                kind: ctx.kind,
-                controllerId: ctx.controllerId,
-                submissions: ctx.submissions,
-                players: ctx.players,
-                currentDealerId: hostId,
-              });
-              toast('你持有鬼牌：請在結算前指定莊家');
-            } else {
-              const p = hostState.players[controller.controllerId];
-              if (p?.conn) send(p.conn, ctx);
-              toast('等待鬼牌玩家指定莊家…');
-              log(`等待 ${hostState.players[controller.controllerId]?.name || controller.controllerId} 指定莊家`);
-            }
-          } else {
-            revealRound();
-          }
+          startDealerPickOrRevealFlow();
         }
         return;
       }
@@ -7162,7 +7136,7 @@ async function revealRound() {
 
     $('btnReveal').addEventListener('click', () => {
       if (!isHost) return;
-      revealRound();
+      startDealerPickOrRevealFlow();
     });
 
     $('btnNextRound').addEventListener('click', () => {

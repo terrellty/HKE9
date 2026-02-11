@@ -407,6 +407,8 @@ function getRoom(roomId) {
       revealed: false,
       nextReadyMap: {},
       preStartReadyMap: {},
+      dealerPick: null,
+      dealerOverride: null,
     });
   }
   return rooms.get(id);
@@ -472,6 +474,8 @@ function dealRound(room) {
   room.dealt = {};
   room.submissions = {};
   room.nextReadyMap = {};
+  room.dealerPick = null;
+  room.dealerOverride = null;
 
   for (const id of ids) room.preStartReadyMap[id] = false;
 
@@ -511,7 +515,59 @@ function maybeStartNextRound(room) {
   dealRound(room);
 }
 
-function resolveReveal(room) {
+
+function findDealerPickController(submissions, ids) {
+  const targetIds = Array.isArray(ids) ? ids.slice() : Object.keys(submissions || {});
+  const big = targetIds.filter((id) => submissions[id]?.dealerCard?.s === 'J' && submissions[id]?.dealerCard?.j === 'BJ');
+  if (big.length) {
+    big.sort();
+    return { controllerId: big[0], kind: 'BJ' };
+  }
+  const small = targetIds.filter((id) => submissions[id]?.dealerCard?.s === 'J' && submissions[id]?.dealerCard?.j === 'SJ');
+  if (small.length) {
+    small.sort();
+    return { controllerId: small[0], kind: 'SJ' };
+  }
+  return null;
+}
+
+function startDealerPickOrReveal(room) {
+  const subs = room.submissions || {};
+  const ids = currentRoundPlayerIds(room);
+  if (!ids.length) return;
+  if (!ids.every((id) => !!subs[id])) return;
+
+  const controller = findDealerPickController(subs, ids);
+  if (!controller) {
+    room.dealerPick = null;
+    resolveReveal(room, null);
+    return;
+  }
+
+  room.dealerPick = { ...controller, round: room.round };
+  room.dealerOverride = null;
+
+  const payload = {
+    t: 'dealerPickStart',
+    round: room.round,
+    controllerId: controller.controllerId,
+    kind: controller.kind,
+    submissions: subs,
+    players: roomPlayers(room),
+  };
+
+  const controllerSocket = room.clients.get(controller.controllerId)?.socket;
+  if (!controllerSocket) {
+    room.dealerPick = null;
+    resolveReveal(room, null);
+    return;
+  }
+
+  send(controllerSocket, { t: 'relay', fromId: SERVER_HOST_ID, payload });
+  relayToRoom(room, { t: 'dealerPickWait', round: room.round, controllerId: controller.controllerId }, controller.controllerId);
+}
+
+function resolveReveal(room, dealerOverride = null) {
   const subs = room.submissions;
   const ids = currentRoundPlayerIds(room);
   if (!ids.length) return;
@@ -519,7 +575,7 @@ function resolveReveal(room) {
 
   let scoreData;
   try {
-    scoreData = computeRoundResult({ submissions: subs, dealerOverride: null });
+    scoreData = computeRoundResult({ submissions: subs, dealerOverride });
   } catch (error) {
     relayToRoom(room, { t: 'error', message: error.message || '結算失敗' });
     return;
@@ -538,6 +594,8 @@ function resolveReveal(room) {
   }
 
   room.revealed = true;
+  room.dealerPick = null;
+  room.dealerOverride = null;
   room.nextReadyMap = {};
   for (const id of ids) room.nextReadyMap[id] = false;
 
@@ -700,7 +758,37 @@ wss.on('connection', (ws) => {
         const ready = {};
         for (const id of currentRoundPlayerIds(room)) ready[id] = !!room.submissions[id];
         relayToRoom(room, { t: 'ready', ready });
-        resolveReveal(room);
+        startDealerPickOrReveal(room);
+        return;
+      }
+
+      if (payload.t === 'dealerPickChoice') {
+        const expected = room.dealerPick;
+        const pick = payload.pick || {};
+        if (!expected) {
+          send(ws, { t: 'relay', fromId: SERVER_HOST_ID, payload: { t: 'error', message: '目前沒有需要指定莊家的局' } });
+          return;
+        }
+        if (Number(pick.round || 0) !== Number(expected.round || 0)) {
+          send(ws, { t: 'relay', fromId: SERVER_HOST_ID, payload: { t: 'error', message: '指定莊家局數不符' } });
+          return;
+        }
+        if (ws.id !== expected.controllerId) {
+          send(ws, { t: 'relay', fromId: SERVER_HOST_ID, payload: { t: 'error', message: '你不是本局指定莊家的控制者' } });
+          return;
+        }
+
+        const dealerId = String(pick.dealerId || '');
+        const ids = currentRoundPlayerIds(room);
+        if (!ids.includes(dealerId)) {
+          send(ws, { t: 'relay', fromId: SERVER_HOST_ID, payload: { t: 'error', message: '指定的莊家不在房間內' } });
+          return;
+        }
+
+        room.dealerOverride = dealerId;
+        room.dealerPick = null;
+        relayToRoom(room, { t: 'dealerPickFinal', round: room.round, dealerId });
+        resolveReveal(room, dealerId);
         return;
       }
 
