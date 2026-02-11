@@ -1966,6 +1966,17 @@
       });
     }
 
+    function formatIsoToUtc8Text(raw) {
+      const text = String(raw || '').trim();
+      if (!text) return '—';
+      const date = new Date(text);
+      if (Number.isNaN(date.getTime())) return text.slice(0, 19).replace('T', ' ');
+      return date.toLocaleString('sv-SE', {
+        timeZone: 'Asia/Taipei',
+        hour12: false,
+      }).replace(',', '');
+    }
+
     function renderScoreboardHistory() {
       const body = $('scoreboardHistoryBody');
       if (!body) return;
@@ -1991,7 +2002,7 @@
         const roundText = Number(item?.round || 0) > 0 ? `第 ${Number(item.round)} 局` : '—';
         tr.appendChild(el('td','py-2 pr-2 mono text-emerald-50/80 whitespace-nowrap', roundText));
         const timeRaw = String(item?.at || item?.updatedAt || '');
-        const timeText = timeRaw ? timeRaw.slice(0, 19).replace('T', ' ') : '—';
+        const timeText = formatIsoToUtc8Text(timeRaw);
         tr.appendChild(el('td','py-2 pr-2 mono text-emerald-50/80 whitespace-nowrap', timeText));
         const changes = Array.isArray(item?.changes) ? item.changes : [];
         const changeText = changes.length
@@ -2042,7 +2053,7 @@
         if (!scoreboardState.cache.MON) scoreboardState.cache.MON = await fetchScoreboard('MON');
         const dayAt = scoreboardState.cache.DAY?.updatedAt ? String(scoreboardState.cache.DAY.updatedAt) : '';
         const monAt = scoreboardState.cache.MON?.updatedAt ? String(scoreboardState.cache.MON.updatedAt) : '';
-        setScoreboardStatus(`DAY:${dayAt ? dayAt.slice(0,19).replace('T',' ') : '—'} | MON:${monAt ? monAt.slice(0,19).replace('T',' ') : '—'}`);
+        setScoreboardStatus(`DAY:${formatIsoToUtc8Text(dayAt)} | MON:${formatIsoToUtc8Text(monAt)}（UTC+8）`);
         renderScoreboardContent();
       } catch (e) {
         setScoreboardStatus('載入失敗：' + (e?.message || e));
@@ -3646,6 +3657,7 @@ function eval3NoJoker(cards) {
       cumulative: {}, // peerId -> total
       dealerPick: null, // {controllerId, kind:'BJ'|'SJ', startedAt}
       dealerOverride: null, // dealerId chosen during dealer pick phase
+      revealInProgress: false,
       lastReveal: null,
     };
 
@@ -4150,6 +4162,7 @@ function eval3NoJoker(cards) {
       hostState.dealt = {};
       hostState.submissions = {};
       hostState.revealed = false;
+      hostState.revealInProgress = false;
       hostState.lastReveal = null;
       hostState.nextReadyMap = {};
       hostState.cumulative = {};
@@ -5310,6 +5323,7 @@ function eval3NoJoker(cards) {
         return;
       }
       hostState.round = 0;
+      hostState.revealInProgress = false;
 
       // IMPORTANT: for DAY/NIG persistent rooms, do NOT reset cumulative.
       if (!persistState.enabled) {
@@ -5337,6 +5351,7 @@ function eval3NoJoker(cards) {
       }
       hostState.round += 1;
       hostState.revealed = false;
+      hostState.revealInProgress = false;
       hostState.lastReveal = null;
       clientState.keepRevealOnTable = false;
       clientState.revealTableRendered = false;
@@ -5447,6 +5462,8 @@ function eval3NoJoker(cards) {
 async function revealRound() {
       if (!isHost) return;
       if (hostState.revealed) return;
+      if (hostState.revealInProgress) return;
+      hostState.revealInProgress = true;
       // Ensure table reveal is visible for host (avoid being hidden under status modal)
       try { $('statusModal')?.classList.add('hidden');
       } catch {}
@@ -5457,11 +5474,13 @@ async function revealRound() {
       const missing = ids.filter(id => !hostState.submissions[id]);
       if (missing.length) {
         toast('尚有玩家未提交，無法結算');
+        hostState.revealInProgress = false;
         return;
       }
       const noDealerPick = ids.filter(id => !hostState.submissions[id]?.dealerCard);
       if (noDealerPick.length) {
         toast('有人未選莊牌，無法結算');
+        hostState.revealInProgress = false;
         return;
       }
 
@@ -5470,6 +5489,7 @@ async function revealRound() {
         const baseUrl = relayHttpUrl();
         if (!baseUrl) {
           toast('Relay 伺服器網址未設定');
+          hostState.revealInProgress = false;
           return;
         }
         const res = await fetch(`${baseUrl}/score`, {
@@ -5483,11 +5503,13 @@ async function revealRound() {
         if (!res.ok) {
           const msg = await res.text().catch(() => '');
           toast(`伺服器結算失敗：${msg || res.status}`);
+          hostState.revealInProgress = false;
           return;
         }
         scoreData = await res.json();
       } catch (error) {
         toast(`伺服器結算失敗：${error?.message || '無法連線'}`);
+        hostState.revealInProgress = false;
         return;
       }
 
@@ -5496,6 +5518,7 @@ async function revealRound() {
       hostState.dealerOverride = null;
       if (!dealerId) {
         toast('無法決定莊家（資料不足）');
+        hostState.revealInProgress = false;
         return;
       }
       hostState.dealerId = dealerId;
@@ -5560,6 +5583,7 @@ async function revealRound() {
         };
         glog('所有局數完成（關閉本局結算後顯示總結）');
       }
+      hostState.revealInProgress = false;
     }
 
     function allPlayersForBroadcast() {
@@ -7483,6 +7507,7 @@ async function revealRound() {
         // host: restart game immediately
         hostState.round = 0;
         hostState.revealed = false;
+        hostState.revealInProgress = false;
         hostState.dealt = {};
         hostState.submissions = {};
         hostState.dealerId = null;
