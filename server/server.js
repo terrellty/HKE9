@@ -406,6 +406,7 @@ function getRoom(roomId) {
       dealt: {},
       submissions: {},
       revealed: false,
+      revealInProgress: false,
       nextReadyMap: {},
       preStartReadyMap: {},
       dealerPick: null,
@@ -510,6 +511,7 @@ function dealRound(room) {
   room.round += 1;
   room.started = true;
   room.revealed = false;
+  room.revealInProgress = false;
   room.dealt = {};
   room.submissions = {};
   room.nextReadyMap = {};
@@ -573,6 +575,7 @@ function findDealerPickController(submissions, ids) {
 }
 
 function startDealerPickOrReveal(room) {
+  if (room.revealed || room.revealInProgress) return;
   const subs = room.submissions || {};
   const ids = currentRoundPlayerIds(room);
   if (!ids.length) return;
@@ -609,16 +612,20 @@ function startDealerPickOrReveal(room) {
 }
 
 function resolveReveal(room, dealerOverride = null) {
+  if (room.revealed || room.revealInProgress) return;
   const subs = room.submissions;
   const ids = currentRoundPlayerIds(room);
   if (!ids.length) return;
   if (!ids.every((id) => !!subs[id])) return;
+
+  room.revealInProgress = true;
 
   let scoreData;
   try {
     scoreData = computeRoundResult({ submissions: subs, dealerOverride });
   } catch (error) {
     relayToRoom(room, { t: 'error', message: error.message || '結算失敗' });
+    room.revealInProgress = false;
     return;
   }
 
@@ -637,6 +644,7 @@ function resolveReveal(room, dealerOverride = null) {
   room.revealed = true;
   room.dealerPick = null;
   room.dealerOverride = null;
+  room.revealInProgress = false;
   room.nextReadyMap = {};
   for (const id of ids) room.nextReadyMap[id] = false;
 
