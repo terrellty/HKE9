@@ -457,8 +457,24 @@ function relayToRoom(room, payload, exceptId = null) {
 
 function currentRoundPlayerIds(room) {
   const dealtIds = Object.keys(room.dealt || {});
+  if (room.started && !room.revealed && dealtIds.length) {
+    return dealtIds.sort();
+  }
   if (!dealtIds.length) return room.seatOrder.filter((id) => room.clients.has(id));
   return room.seatOrder.filter((id) => room.clients.has(id) && room.dealt[id]);
+}
+
+function buildAutoSubmission(cards9) {
+  if (!Array.isArray(cards9) || cards9.length !== 9) return null;
+  const cards = cards9.map((card) => normalizeCard(card)).filter(Boolean);
+  if (cards.length !== 9) return null;
+  return {
+    dealerCard: cards[0],
+    head: cards.slice(1, 3),
+    mid: cards.slice(3, 6),
+    tail: cards.slice(6, 9),
+    report: 'none',
+  };
 }
 
 function broadcastPlayers(room) {
@@ -822,13 +838,26 @@ wss.on('connection', (ws) => {
       room.cumulativeByName[closedName] = Number(room.cumulative[ws.id] || 0);
     }
 
+    const leftDuringRound = !!(room.started && !room.revealed && room.dealt[ws.id]);
+
+    if (leftDuringRound && !room.submissions[ws.id]) {
+      const autoSub = buildAutoSubmission(room.dealt[ws.id]?.all9);
+      if (autoSub) {
+        room.submissions[ws.id] = autoSub;
+      }
+    }
+
     room.clients.delete(ws.id);
     room.seatOrder = room.seatOrder.filter((id) => id !== ws.id);
-    delete room.dealt[ws.id];
-    delete room.submissions[ws.id];
+
+    if (!leftDuringRound) {
+      delete room.dealt[ws.id];
+      delete room.submissions[ws.id];
+      delete room.cumulative[ws.id];
+    }
+
     delete room.nextReadyMap[ws.id];
     delete room.preStartReadyMap[ws.id];
-    delete room.cumulative[ws.id];
 
     broadcastPlayers(room);
     if (!room.started) {
@@ -836,6 +865,14 @@ wss.on('connection', (ws) => {
       for (const id of room.seatOrder) ready[id] = !!room.preStartReadyMap[id];
       relayToRoom(room, { t: 'ready', ready });
     }
+
+    if (leftDuringRound) {
+      const ready = {};
+      for (const id of currentRoundPlayerIds(room)) ready[id] = !!room.submissions[id];
+      relayToRoom(room, { t: 'ready', ready });
+      startDealerPickOrReveal(room);
+    }
+
     maybeStartNextRound(room);
     cleanRoom(roomId);
   });
