@@ -790,12 +790,14 @@
         </div>
 
         <div class="p-4 grid gap-3 max-h-[70vh] overflow-auto">
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="btnTabDay" type="button" class="text-xs px-3 py-2 rounded-xl border border-white/10 bg-white/10 hover:bg-white/15 text-emerald-50 font-black">DAY</button>
             <button id="btnTabNig" type="button" class="text-xs px-3 py-2 rounded-xl border border-white/10 bg-white/10 hover:bg-white/15 text-emerald-50 font-black">MON</button>
+            <button id="btnTabHistory" type="button" class="text-xs px-3 py-2 rounded-xl border border-white/10 bg-white/10 hover:bg-white/15 text-emerald-50 font-black">最近20局變更</button>
             <div id="scoreboardStatus" class="ml-auto text-[11px] text-emerald-100/70">—</div>
           </div>
 
-          <section class="rounded-2xl bg-black/20 border border-white/10 p-3">
+          <section id="scoreboardRankSection" class="rounded-2xl bg-black/20 border border-white/10 p-3">
             <div class="flex items-center justify-between gap-2">
               <div class="font-semibold">排行榜</div>
               <div class="text-xs text-emerald-100/70">依累計分數排序</div>
@@ -810,6 +812,25 @@
                   </tr>
                 </thead>
                 <tbody id="scoreboardBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="scoreboardHistorySection" class="hidden rounded-2xl bg-black/20 border border-white/10 p-3">
+            <div class="flex items-center justify-between gap-2">
+              <div class="font-semibold">分數變更紀錄</div>
+              <div class="text-xs text-emerald-100/70">每個房間保留最近 20 局</div>
+            </div>
+            <div class="mt-2 overflow-auto">
+              <table class="w-full text-sm">
+                <thead class="text-emerald-100/80">
+                  <tr class="border-b border-white/10">
+                    <th class="text-left py-2">局數</th>
+                    <th class="text-left py-2">時間</th>
+                    <th class="text-left py-2">變更</th>
+                  </tr>
+                </thead>
+                <tbody id="scoreboardHistoryBody"></tbody>
               </table>
             </div>
           </section>
@@ -1865,7 +1886,8 @@
     // -------------------- Scoreboard (DAY/MON) --------------------
     const scoreboardState = {
       tab: 'MON',
-      cache: { MON: null },
+      view: 'rank',
+      cache: { DAY: null, MON: null },
       loading: false,
       reloadAfterLoading: false,
     };
@@ -1875,13 +1897,30 @@
       scoreboardState.tab = (t === 'MON' ? 'MON' : 'DAY');
       const btnDay = $('btnTabDay');
       const btnNig = $('btnTabNig'); // keep id for backward-compat UI
+      const btnHistory = $('btnTabHistory');
       if (btnDay && btnNig) {
         const on = 'bg-amber-400/15 text-amber-100 border-amber-200/20';
         const off = 'bg-white/10 hover:bg-white/15 text-emerald-50 border-white/10';
         btnDay.className = 'text-xs px-3 py-2 rounded-xl border font-black ' + (scoreboardState.tab==='DAY' ? on : off);
         btnNig.className = 'text-xs px-3 py-2 rounded-xl border font-black ' + (scoreboardState.tab==='MON' ? on : off);
+        if (btnHistory) {
+          btnHistory.className = 'text-xs px-3 py-2 rounded-xl border font-black ' + (scoreboardState.view==='history' ? on : off);
+        }
       }
-      renderScoreboardTable();
+      renderScoreboardContent();
+    }
+
+    function setScoreboardView(view) {
+      scoreboardState.view = (String(view || '').toLowerCase() === 'history') ? 'history' : 'rank';
+      const btnDay = $('btnTabDay');
+      const btnNig = $('btnTabNig');
+      const btnHistory = $('btnTabHistory');
+      const on = 'bg-amber-400/15 text-amber-100 border-amber-200/20';
+      const off = 'bg-white/10 hover:bg-white/15 text-emerald-50 border-white/10';
+      if (btnDay) btnDay.className = 'text-xs px-3 py-2 rounded-xl border font-black ' + (scoreboardState.view==='rank' && scoreboardState.tab==='DAY' ? on : off);
+      if (btnNig) btnNig.className = 'text-xs px-3 py-2 rounded-xl border font-black ' + (scoreboardState.view==='rank' && scoreboardState.tab==='MON' ? on : off);
+      if (btnHistory) btnHistory.className = 'text-xs px-3 py-2 rounded-xl border font-black ' + (scoreboardState.view==='history' ? on : off);
+      renderScoreboardContent();
     }
 
     function setScoreboardStatus(text) {
@@ -1927,6 +1966,59 @@
       });
     }
 
+    function renderScoreboardHistory() {
+      const body = $('scoreboardHistoryBody');
+      if (!body) return;
+      body.innerHTML = '';
+      const tab = scoreboardState.tab;
+      const data = scoreboardState.cache[tab];
+      const rawHistory = Array.isArray(data?.scoreHistory) ? data.scoreHistory : [];
+      const rows = rawHistory.slice(0, 20);
+
+      if (!rows.length) {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-white/5';
+        const td = el('td','py-3 text-emerald-50/70 text-sm','尚無資料');
+        td.colSpan = 3;
+        tr.appendChild(td);
+        body.appendChild(tr);
+        return;
+      }
+
+      rows.forEach((item) => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-white/5 align-top';
+        const roundText = Number(item?.round || 0) > 0 ? `第 ${Number(item.round)} 局` : '—';
+        tr.appendChild(el('td','py-2 pr-2 mono text-emerald-50/80 whitespace-nowrap', roundText));
+        const timeRaw = String(item?.at || item?.updatedAt || '');
+        const timeText = timeRaw ? timeRaw.slice(0, 19).replace('T', ' ') : '—';
+        tr.appendChild(el('td','py-2 pr-2 mono text-emerald-50/80 whitespace-nowrap', timeText));
+        const changes = Array.isArray(item?.changes) ? item.changes : [];
+        const changeText = changes.length
+          ? changes.map((c) => {
+            const name = String(c?.name || '').trim() || '玩家';
+            const delta = Number(c?.delta || 0);
+            return `${name} ${delta > 0 ? '+' : ''}${delta}`;
+          }).join(' ｜ ')
+          : '—';
+        tr.appendChild(el('td','py-2 pr-2 text-slate-50', changeText));
+        body.appendChild(tr);
+      });
+    }
+
+    function renderScoreboardContent() {
+      const rankSec = $('scoreboardRankSection');
+      const historySec = $('scoreboardHistorySection');
+      const isHistory = scoreboardState.view === 'history';
+      if (rankSec) rankSec.classList.toggle('hidden', isHistory);
+      if (historySec) historySec.classList.toggle('hidden', !isHistory);
+      if (isHistory) {
+        renderScoreboardHistory();
+      } else {
+        renderScoreboardTable();
+      }
+    }
+
     async function fetchScoreboard(roomId) {
       let rid = String(roomId||'').trim().toUpperCase();
       // backward-compat: NIG is now MON
@@ -1951,10 +2043,10 @@
         const dayAt = scoreboardState.cache.DAY?.updatedAt ? String(scoreboardState.cache.DAY.updatedAt) : '';
         const monAt = scoreboardState.cache.MON?.updatedAt ? String(scoreboardState.cache.MON.updatedAt) : '';
         setScoreboardStatus(`DAY:${dayAt ? dayAt.slice(0,19).replace('T',' ') : '—'} | MON:${monAt ? monAt.slice(0,19).replace('T',' ') : '—'}`);
-        renderScoreboardTable();
+        renderScoreboardContent();
       } catch (e) {
         setScoreboardStatus('載入失敗：' + (e?.message || e));
-        renderScoreboardTable();
+        renderScoreboardContent();
       } finally {
         scoreboardState.loading = false;
         if (scoreboardState.reloadAfterLoading) {
@@ -1993,7 +2085,7 @@
     function openScoreboardModal() {
       $('scoreboardModal').classList.remove('hidden');
       updateBodyOverflow();
-      // default tab DAY
+      setScoreboardView(scoreboardState.view || 'rank');
       setScoreboardTab(scoreboardState.tab || 'DAY');
       loadScoreboard(false);
     }
@@ -3605,9 +3697,8 @@ function eval3NoJoker(cards) {
       enabled: false,
       roomId: '',
       scoresByName: {}, // {name: number}
+      scoreHistory: [], // [{ round, at, dealerId, dealerName, changes:[{id,name,delta}] }], newest first
       lastSavedRound: 0,
-      // NOTE: We intentionally do NOT keep per-round history for DAY/MON.
-      // Only cumulative totals are stored.
     };
 
     function isPersistRoomId(id) {
@@ -3785,12 +3876,52 @@ function eval3NoJoker(cards) {
     function buildPersistRecordPayload() {
       const roomId = persistState.roomId;
       const now = new Date().toISOString();
-      // Only cumulative totals (no per-round history)
       return {
         roomId,
         updatedAt: now,
         scoresByName: persistState.scoresByName || {},
+        scoreHistory: Array.isArray(persistState.scoreHistory) ? persistState.scoreHistory.slice(0, 20) : [],
       };
+    }
+
+    function buildRoundHistoryEntryFromReveal(revealMsg) {
+      if (!revealMsg || typeof revealMsg !== 'object') return null;
+      const results = revealMsg.results && typeof revealMsg.results === 'object' ? revealMsg.results : null;
+      if (!results) return null;
+
+      const players = {};
+      const list = Array.isArray(revealMsg.players) ? revealMsg.players : [];
+      list.forEach((p) => {
+        const id = String(p?.id || '').trim();
+        if (!id) return;
+        players[id] = String(p?.name || '').trim() || '玩家';
+      });
+
+      const changes = Object.entries(results)
+        .map(([id, row]) => {
+          const pid = String(id || '').trim();
+          const delta = Number(row?.total || 0);
+          if (!pid) return null;
+          return { id: pid, name: players[pid] || '玩家', delta };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.delta - a.delta || a.name.localeCompare(b.name));
+
+      return {
+        round: Number(revealMsg.round || 0),
+        at: new Date().toISOString(),
+        dealerId: String(revealMsg.dealerId || ''),
+        dealerName: players[String(revealMsg.dealerId || '')] || '',
+        changes,
+      };
+    }
+
+    function mergePersistScoreHistory(nextEntry) {
+      if (!persistState.enabled || !nextEntry) return;
+      const current = Array.isArray(persistState.scoreHistory) ? persistState.scoreHistory.slice() : [];
+      const normalizedRound = Number(nextEntry.round || 0);
+      const filtered = current.filter((item) => Number(item?.round || 0) !== normalizedRound);
+      persistState.scoreHistory = [nextEntry, ...filtered].slice(0, 20);
     }
 
     async function savePersistRecordNow(reason = '') {
@@ -3810,6 +3941,7 @@ function eval3NoJoker(cards) {
         persistState.enabled = false;
         persistState.roomId = '';
         persistState.scoresByName = {};
+        persistState.scoreHistory = [];
         persistState.lastSavedRound = 0;
         return false;
       }
@@ -3821,8 +3953,10 @@ function eval3NoJoker(cards) {
       const remote = await persistReadRecord(rid);
       if (remote && typeof remote === 'object') {
         persistState.scoresByName = remote.scoresByName || {};
+        persistState.scoreHistory = Array.isArray(remote.scoreHistory) ? remote.scoreHistory.slice(0, 20) : [];
         dlog(`Persist(API): loaded server record for ${rid}`);
       } else {
+        persistState.scoreHistory = [];
         dlog(`Persist(API): no server record found for ${rid}`);
       }
 
@@ -3847,6 +3981,7 @@ function eval3NoJoker(cards) {
       const rid = persistState.roomId;
 
       refreshPersistScoresByNameFromCumulative();
+      mergePersistScoreHistory(buildRoundHistoryEntryFromReveal(hostState.lastReveal));
       const record = buildPersistRecordPayload();
 
       await workerWriteRecord(rid, record);
@@ -3877,11 +4012,13 @@ function eval3NoJoker(cards) {
         merged[nm] = Number(cumulative[pid] || 0);
       }
       persistState.scoresByName = merged;
+      mergePersistScoreHistory(buildRoundHistoryEntryFromReveal(msg));
 
       const record = {
         roomId: rid,
         updatedAt: new Date().toISOString(),
         scoresByName: persistState.scoresByName || {},
+        scoreHistory: Array.isArray(persistState.scoreHistory) ? persistState.scoreHistory.slice(0, 20) : [],
       };
 
       const ok = await workerWriteRecord(rid, record);
@@ -3901,6 +4038,7 @@ function eval3NoJoker(cards) {
       const remote = await persistReadRecord(roomId);
       if (remote && typeof remote === 'object') {
         record.scoresByName = remote.scoresByName || {};
+        record.scoreHistory = Array.isArray(remote.scoreHistory) ? remote.scoreHistory.slice(0, 20) : [];
       }
 
       const prev = String(prevName || '').trim();
@@ -3917,7 +4055,7 @@ function eval3NoJoker(cards) {
       } else if (scores[next] === undefined) {
         scores[next] = 0;
       }
-      record = { ...record, roomId, updatedAt: now, scoresByName: scores };
+      record = { ...record, roomId, updatedAt: now, scoresByName: scores, scoreHistory: Array.isArray(record.scoreHistory) ? record.scoreHistory.slice(0, 20) : [] };
 
       await workerWriteRecord(roomId, record);
     }
@@ -3947,6 +4085,7 @@ function eval3NoJoker(cards) {
         persistState.roomId = '';
         persistState.fileId = null;
         persistState.scoresByName = {};
+        persistState.scoreHistory = [];
         persistState.lastSavedRound = 0;
       } catch {}
       try { stopHostHeartbeat(); } catch {}
@@ -7138,8 +7277,9 @@ async function revealRound() {
     });
     $('btnCloseScoreboard')?.addEventListener('click', closeScoreboardModal);
     $('scoreboardBackdrop')?.addEventListener('click', closeScoreboardModal);
-    $('btnTabDay')?.addEventListener('click', () => setScoreboardTab('DAY'));
-    $('btnTabNig')?.addEventListener('click', () => setScoreboardTab('MON'));
+    $('btnTabDay')?.addEventListener('click', () => { setScoreboardView('rank'); setScoreboardTab('DAY'); });
+    $('btnTabNig')?.addEventListener('click', () => { setScoreboardView('rank'); setScoreboardTab('MON'); });
+    $('btnTabHistory')?.addEventListener('click', () => setScoreboardView('history'));
     $('btnScoreboardRefresh')?.addEventListener('click', () => loadScoreboard(true));
 
     // App update button (lobby)
