@@ -396,6 +396,7 @@ function getRoom(roomId) {
       roomId: id,
       clients: new Map(),
       seatOrder: [],
+      disconnectedSeatNames: {},
       cumulative: {},
       cumulativeByName: {},
       recordLoaded: false,
@@ -440,12 +441,34 @@ function roomPlayers(room) {
   const out = [];
   for (const id of room.seatOrder) {
     const p = room.clients.get(id);
-    if (p) out.push({ id, name: p.name || '玩家' });
+    if (p) {
+      out.push({ id, name: p.name || '玩家', connected: true });
+      continue;
+    }
+    const offlineName = String(room.disconnectedSeatNames?.[id] || '').trim();
+    if (offlineName) out.push({ id, name: offlineName, connected: false });
   }
   for (const [id, p] of room.clients.entries()) {
-    if (!out.find((x) => x.id === id)) out.push({ id, name: p.name || '玩家' });
+    if (!out.find((x) => x.id === id)) out.push({ id, name: p.name || '玩家', connected: true });
   }
   return out;
+}
+
+function pruneDisconnectedSeats(room) {
+  const keep = [];
+  for (const id of room.seatOrder) {
+    if (room.clients.has(id)) {
+      keep.push(id);
+      continue;
+    }
+    delete room.dealt[id];
+    delete room.submissions[id];
+    delete room.nextReadyMap[id];
+    delete room.preStartReadyMap[id];
+    delete room.cumulative[id];
+    delete room.disconnectedSeatNames[id];
+  }
+  room.seatOrder = keep;
 }
 
 function relayToRoom(room, payload, exceptId = null) {
@@ -527,6 +550,8 @@ function maybeStartNextRound(room) {
   const nextReadyIds = currentRoundPlayerIds(room);
   const allReady = nextReadyIds.length > 0 && nextReadyIds.every((id) => room.nextReadyMap[id]);
   if (!allReady) return;
+  pruneDisconnectedSeats(room);
+  broadcastPlayers(room);
   relayToRoom(room, { t: 'nextRound', round: room.round + 1 });
   dealRound(room);
 }
@@ -679,6 +704,7 @@ wss.on('connection', (ws) => {
       ws.roomId = roomId;
       const playerName = String(msg.name || '玩家').trim() || '玩家';
       room.clients.set(ws.id, { socket: ws, name: playerName });
+      delete room.disconnectedSeatNames[ws.id];
       if (!room.seatOrder.includes(ws.id)) room.seatOrder.push(ws.id);
       room.preStartReadyMap[ws.id] = false;
       if (room.cumulative[ws.id] === undefined && room.cumulativeByName[playerName] !== undefined) {
@@ -848,7 +874,13 @@ wss.on('connection', (ws) => {
     }
 
     room.clients.delete(ws.id);
-    room.seatOrder = room.seatOrder.filter((id) => id !== ws.id);
+
+    if (leftDuringRound) {
+      room.disconnectedSeatNames[ws.id] = closedName || '玩家';
+    } else {
+      room.seatOrder = room.seatOrder.filter((id) => id !== ws.id);
+      delete room.disconnectedSeatNames[ws.id];
+    }
 
     if (!leftDuringRound) {
       delete room.dealt[ws.id];
